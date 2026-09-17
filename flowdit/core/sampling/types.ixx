@@ -26,6 +26,5 @@ export namespace flowdit {
     };
     struct SamplingProgress final {
         std::uint32_t step{}, step_count{}, nfe{};
-        float time{};
     };
 } // namespace flowdit

@@ -20,7 +20,6 @@ export namespace flowdit::editor {
             FrameInfo info;
             std::size_t slot{};
             std::uint64_t ready{};
-            std::uint32_t width{}, height{};
         };
         graphics::Device& device;
         std::array<Slot, 2> slots;

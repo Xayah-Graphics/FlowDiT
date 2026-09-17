@@ -34,7 +34,7 @@ namespace flowdit {
 namespace flowdit::output {
     void write_configuration(const RunConfiguration& configuration) {
         const auto& optimizer = configuration.optimizer;
-        const nlohmann::json json{{"dataset", configuration.dataset.generic_string()}, {"dataset_type", static_cast<int>(configuration.dataset_type)}, {"patch_size", configuration.patch_size}, {"output", configuration.output.generic_string()}, {"end_step", configuration.end_step}, {"seed", configuration.seed}, {"device", configuration.device}, {"execution_steps", configuration.execution_steps}, {"log_interval", configuration.log_interval}, {"preview_interval", configuration.preview_interval}, {"save_interval", configuration.save_interval}, {"preview", configuration.preview}, {"optimizer", {{"learning_rate", optimizer.learning_rate}, {"first_decay", optimizer.first_decay}, {"second_decay", optimizer.second_decay}, {"epsilon", optimizer.epsilon}, {"weight_decay", optimizer.weight_decay}, {"ema_half_life", optimizer.exponential_average.half_life_samples}, {"ema_ramp", optimizer.exponential_average.ramp_up_ratio}}}};
+        const nlohmann::json json{{"dataset", configuration.dataset.generic_string()}, {"dataset_type", static_cast<int>(configuration.dataset_type)}, {"patch_size", configuration.patch_size}, {"end_step", configuration.end_step}, {"seed", configuration.seed}, {"optimizer", {{"learning_rate", optimizer.learning_rate}, {"first_decay", optimizer.first_decay}, {"second_decay", optimizer.second_decay}, {"epsilon", optimizer.epsilon}, {"weight_decay", optimizer.weight_decay}, {"ema_half_life", optimizer.exponential_average.half_life_samples}, {"ema_ramp", optimizer.exponential_average.ramp_up_ratio}}}};
         std::ofstream file{configuration.output / "run.json"};
         file.exceptions(std::ios::failbit | std::ios::badbit);
         file << json.dump(2) << '\n';
@@ -50,12 +50,6 @@ namespace flowdit::output {
         result.patch_size                                      = json.at("patch_size");
         result.end_step                                        = json.at("end_step");
         result.seed                                            = json.at("seed");
-        result.device                                          = json.at("device");
-        result.execution_steps                                 = json.at("execution_steps");
-        result.log_interval                                    = json.at("log_interval");
-        result.preview_interval                                = json.at("preview_interval");
-        result.save_interval                                   = json.at("save_interval");
-        result.preview                                         = json.at("preview").get<SamplingRequest>();
         const auto& optimizer                                  = json.at("optimizer");
         result.optimizer.learning_rate                         = optimizer.at("learning_rate");
         result.optimizer.first_decay                           = optimizer.at("first_decay");
@@ -66,12 +60,8 @@ namespace flowdit::output {
         result.optimizer.exponential_average.ramp_up_ratio     = optimizer.at("ema_ramp");
         return result;
     }
-    void write_png(const std::filesystem::path& path, const SamplingResult& images, const std::optional<std::size_t> index) {
+    void write_png(const std::filesystem::path& path, const SamplingResult& images) {
         const std::size_t image_bytes = static_cast<std::size_t>(images.model.image.width) * images.model.image.height * 4uz;
-        if (index) {
-            if (!stbi_write_png(path.string().c_str(), images.model.image.width, images.model.image.height, 4, images.rgba.data() + *index * image_bytes, images.model.image.width * 4u)) throw std::runtime_error{"Cannot write PNG: " + path.string()};
-            return;
-        }
         constexpr std::uint32_t columns = 10u;
         const std::uint32_t width       = columns * images.model.image.width;
         const std::uint32_t height      = static_cast<std::uint32_t>((images.labels.size() + columns - 1u) / columns) * images.model.image.height;
@@ -126,23 +116,18 @@ namespace flowdit::output {
             result.metrics.push_back(record);
         }
         if (!std::filesystem::exists(directory / "samples")) return result;
+        std::uint64_t latest{};
         for (const auto& entry : std::filesystem::directory_iterator{directory / "samples"}) {
-            if (entry.path().extension() != ".json") continue;
-            std::ifstream file{entry.path()};
-            auto info = nlohmann::json::parse(file).get<SampleInfo>();
-            info.path = entry.path();
-            info.path.replace_extension(".png");
-            result.samples.push_back(std::move(info));
+            const auto name = entry.path().filename().string();
+            if (!name.starts_with("step-") || !name.ends_with("-ema.json")) continue;
+            std::uint64_t step{};
+            std::from_chars(name.data() + 5, name.data() + name.size() - 9, step);
+            if (step >= latest) {
+                latest = step;
+                result.preview = entry.path();
+                result.preview.replace_extension(".png");
+            }
         }
-        std::ranges::sort(result.samples, {}, &SampleInfo::training_step);
         return result;
-    }
-    std::string_view solver_name(const SamplingSolver solver) {
-        switch (solver) {
-        case SamplingSolver::euler: return "Euler";
-        case SamplingSolver::heun: return "Heun";
-        case SamplingSolver::rk4: return "RK4";
-        }
-        std::unreachable();
     }
 } // namespace flowdit::output

@@ -27,27 +27,24 @@ namespace flowdit::headless {
     int run(const std::span<const std::string_view> arguments) {
         if (arguments.empty() || arguments.front() == "--help") {
             std::println(R"(FlowDiT
-  flowdit --gui [--device N]
+  flowdit --gui
   flowdit list [DATASET]
   flowdit train DATASET [--run RUN] [--steps N] [options]
   flowdit sample DATASET [--run RUN] [--checkpoint NAME] [options]
-  flowdit sample-fid DATASET [--run RUN] [--checkpoint NAME] [options]
 
 Train options:
-  --device N          --seed N
-  --execution-steps N  --log-interval N     --save-interval N
-  --preview-interval N --preview-steps N    --learning-rate VALUE
+  --seed N           --learning-rate VALUE
 
 Sample options:
   --class all|N       --solver euler|heun|rk4
-  --steps N           --guidance VALUE      --seed N      --device N
+  --steps N           --guidance VALUE      --seed N
 
 DATASET is a directory name in the compiled data root. RUN and NAME come from list.
 New training creates a run; --run resumes its highest-step checkpoint.
 Sampling defaults to the newest run and its highest-step checkpoint.
 All outputs are stored beneath DATASET/.flowdit/runs/RUN.
 Training and standalone sampling are exclusive. Training retains periodic raw/EMA previews.
-sample-fid exports 50,000 PNGs and manifest.csv. Ctrl+C stops at a complete step.)");
+Ctrl+C stops at a complete step.)");
             std::println("\nData root: {}", Catalog::directory.string());
             return 0;
         }
@@ -93,28 +90,21 @@ sample-fid exports 50,000 PNGs and manifest.csv. Ctrl+C stops at a complete step
                 const auto value  = arguments[++index];
                 if (option == "--run") continue;
                 if (option == "--steps") config.end_step = number<std::uint64_t>(value);
-                else if (option == "--device") config.device = number<int>(value);
                 else if (option == "--seed") config.seed = number<std::uint64_t>(value);
-                else if (option == "--execution-steps") config.execution_steps = number<std::uint32_t>(value);
-                else if (option == "--log-interval") config.log_interval = number<std::uint32_t>(value);
-                else if (option == "--save-interval") config.save_interval = number<std::uint32_t>(value);
-                else if (option == "--preview-interval") config.preview_interval = number<std::uint32_t>(value);
-                else if (option == "--preview-steps") config.preview.step_count = number<std::uint32_t>(value);
                 else if (option == "--learning-rate") config.optimizer.learning_rate = number<float>(value);
                 else throw std::runtime_error{"Unknown training option: " + std::string{option}};
             }
-            std::println("FlowDiT train | cuda:{} | batch {} | target {} | {}", config.device, Trainer::batch, config.end_step, config.output.string());
+            std::println("FlowDiT train | batch {} | target {} | {}", Trainer::batch, config.end_step, config.output.string());
             std::cout.flush();
             request.dataset = std::make_shared<const Dataset>(load_dataset(config.dataset_type, config.dataset));
             session.start(std::move(request));
-        } else if (command == "sample" || command == "sample-fid") {
+        } else if (command == "sample") {
             if (dataset.runs.empty()) throw std::runtime_error{"No training runs for " + dataset.name};
             const auto& run = run_name.empty() ? dataset.runs.begin()->second : dataset.runs.at(run_name);
             if (!run.error.empty()) throw std::runtime_error{run.error};
             if (run.checkpoints.empty()) throw std::runtime_error{"No checkpoints in the selected run"};
             SampleRequest request;
-            request.fid = command == "sample-fid";
-            request.output = catalog.inference(run, request.fid);
+            request.output = catalog.inference(run);
             const CheckpointEntry* selected = &run.checkpoints.front();
             for (std::size_t index = 2; index < arguments.size(); ++index) {
                 const auto option = arguments[index];
@@ -130,7 +120,6 @@ sample-fid exports 50,000 PNGs and manifest.csv. Ctrl+C stops at a complete step
                 else if (option == "--steps") request.sampling.step_count = number<std::uint32_t>(value);
                 else if (option == "--guidance") request.sampling.guidance = number<float>(value);
                 else if (option == "--seed") request.sampling.seed = number<std::uint64_t>(value);
-                else if (option == "--device") request.device = number<int>(value);
                 else throw std::runtime_error{"Unknown sampling option: " + std::string{option}};
             }
             if (!selected->error.empty()) throw std::runtime_error{selected->error};
@@ -139,8 +128,6 @@ sample-fid exports 50,000 PNGs and manifest.csv. Ctrl+C stops at a complete step
         } else throw std::runtime_error{"Unknown FlowDiT command"};
         bool closing{};
         std::string failure;
-        Stage previous_stage{Stage::idle};
-        std::uint32_t previous_exported{};
         for (;;) {
             if (interrupted && !closing) {
                 session.stop();
@@ -148,13 +135,9 @@ sample-fid exports 50,000 PNGs and manifest.csv. Ctrl+C stops at a complete step
                 closing     = true;
             }
             auto update = session.receive();
-            for (const auto& message : update.messages) std::println("{}", message);
-            if (update.status.stage != previous_stage) std::println("{}", stage_names[static_cast<std::size_t>(update.status.stage)]);
-            previous_stage = update.status.stage;
             for (const auto& record : update.metrics) std::println("step {:>7} | loss {:.6f} | {:.1f} samples/s | {:.2f}s training", record.step, record.loss, record.samples_per_second, record.training_seconds);
-            for (const auto& sample : update.samples) std::println("saved {} | {} NFE | {} model forwards", sample->info.path.string(), sample->info.nfe, sample->info.nfe * 2);
-            if (update.status.exported != previous_exported) std::println("exported {} / 50000", update.status.exported);
-            previous_exported = update.status.exported;
+            for (const auto& sample : update.samples) std::println("Saved {}", sample->info.path.string());
+            for (const auto& checkpoint : update.checkpoints) std::println("Saved {}", checkpoint.string());
             std::cout.flush();
             if (!update.status.error.empty()) failure = update.status.error;
             if (!update.status.busy) {

@@ -13,11 +13,11 @@ export namespace flowdit::editor {
         std::vector<std::uint32_t> indices;
         Picture picture;
         Canvas canvas;
-        bool dirty{};
+        bool dirty{}, filter_dirty{};
         void open(Renderer& renderer, const DatasetEntry& entry);
         void receive(Renderer& renderer);
         bool draw_browse();
         bool draw(const Catalog& catalog, std::string& selected, bool busy);
-        void draw_images(Renderer& renderer);
+        void draw_images();
     };
 } // namespace flowdit::editor

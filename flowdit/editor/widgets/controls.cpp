@@ -9,17 +9,14 @@ namespace flowdit::editor {
         const auto text = ImGui::CalcTextSize(label, nullptr, true);
         const auto origin = ImGui::GetCursorScreenPos();
         const ImVec2 size{text.x + 24 * dpi, 40 * dpi};
-        ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4{});
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{12 * dpi, (size.y - text.y) * 0.5F});
         ImGui::AlignTextToFramePadding();
-        const bool pressed = ImGui::InvisibleButton(label, size, ImGuiButtonFlags_EnableNav);
+        const bool pressed = ImGui::InvisibleButton(label, size);
         ImGui::PopStyleVar();
-        ImGui::PopStyleColor();
         const bool disabled = ImGui::GetItemFlags() & ImGuiItemFlags_Disabled;
-        const bool focused = !disabled && ImGui::IsItemFocused() && ImGui::GetCurrentContext()->NavCursorVisible;
         auto* storage = ImGui::GetStateStorage();
         const auto key = ImGui::GetItemID();
-        const float alpha = disabled ? 0 : std::lerp(storage->GetFloat(key), ImGui::IsItemHovered() || focused ? 1.0F : 0.0F, std::min(1.0F, ImGui::GetIO().DeltaTime / 0.12F));
+        const float alpha = disabled ? 0 : std::lerp(storage->GetFloat(key), ImGui::IsItemHovered() ? 1.0F : 0.0F, std::min(ImGui::GetIO().DeltaTime, 1.0F / 60) / 0.12F);
         storage->SetFloat(key, alpha);
         const ImVec2 position{origin.x + 12 * dpi, origin.y + (size.y - text.y) * 0.5F};
         const ImVec4 ink = disabled ? ImVec4{0.62F, 0.62F, 0.62F, 1} : ImVec4{0.57F + 0.31F * alpha, 0.58F + 0.30F * alpha, 0.64F + 0.29F * alpha, 1};
@@ -31,7 +28,6 @@ namespace flowdit::editor {
         ImGui::PushStyleColor(ImGuiCol_Text, ink);
         ImGui::RenderTextEllipsis(draw, position, {position.x + text.x, position.y + text.y}, position.x + text.x, label, end, nullptr);
         ImGui::PopStyleColor();
-        if (focused) draw->AddLine({position.x, position.y + text.y + 3 * dpi}, {position.x + text.x, position.y + text.y + 3 * dpi}, ImGui::GetColorU32(ink), dpi);
         return pressed;
     }
     bool tool_button(const char* label, const bool selected, const float width) {
@@ -55,10 +51,8 @@ namespace flowdit::editor {
             ImGui::AlignTextToFramePadding();
             ImGui::TextDisabled("%s", label);
         }
-        const bool focus = ImGui::IsItemClicked();
         if (!stacked) ImGui::SameLine();
         ImGui::SetNextItemWidth(-1);
-        if (focus) ImGui::SetKeyboardFocusHere();
         ImGui::InputScalar("##value", type, value, nullptr, nullptr, format);
         ImGui::EndGroup();
         ImGui::PopID();
@@ -66,18 +60,4 @@ namespace flowdit::editor {
     std::string run_label(const std::string_view name) {
         return std::format("{}-{} · {}:{}", name.substr(4, 2), name.substr(6, 2), name.substr(9, 2), name.substr(11, 2));
     }
-    bool panel_button(const char* id, const bool open) {
-        const float dpi = ImGui::GetStyle().FontScaleDpi;
-        const auto origin = ImGui::GetCursorScreenPos();
-        const bool pressed = ImGui::InvisibleButton(id, {24 * dpi, 24 * dpi}, ImGuiButtonFlags_EnableNav);
-        auto* draw = ImGui::GetWindowDrawList();
-        const auto color = ImGui::GetColorU32(ImGui::IsItemHovered() || ImGui::IsItemFocused() ? ImGuiCol_Text : ImGuiCol_TextDisabled);
-        const ImVec2 minimum{origin.x + 4 * dpi, origin.y + 6 * dpi}, maximum{origin.x + 20 * dpi, origin.y + 18 * dpi};
-        draw->AddRect(minimum, maximum, color, 2 * dpi, 0, dpi);
-        const float x = minimum.x + 5 * dpi;
-        draw->AddLine({x, minimum.y}, {x, maximum.y}, color, dpi);
-        if (open) draw->AddRectFilled(minimum, {x, maximum.y}, color, dpi);
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s sidebar (`)", open ? "Hide" : "Show");
-        return pressed;
-    }
-}
+} // namespace flowdit::editor

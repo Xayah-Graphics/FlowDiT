@@ -16,15 +16,8 @@ export namespace flowdit {
         double elapsed_seconds{};
     };
     struct TrainingStatistics final {
-        std::uint64_t step;
         float average_loss;
-        double samples_per_second;
         double elapsed_seconds;
-    };
-    struct TrainingBatch final {
-        std::uint64_t step{};
-        SamplingResult images;
-        std::vector<float> times;
     };
     struct Trainer final {
         inline static constexpr std::uint32_t batch = 256u;
@@ -37,7 +30,6 @@ export namespace flowdit {
         Trainer& operator=(Trainer&&)      = delete;
         TrainingStatistics optimize(std::uint64_t iterations);
         std::optional<SamplingResult> sample(const SamplingRequest& request, ParameterSource source = ParameterSource::exponential_average, const SamplingObserver& observer = {});
-        TrainingBatch inspect();
         void save(const std::filesystem::path& path) const;
         void load(const std::filesystem::path& path);
 

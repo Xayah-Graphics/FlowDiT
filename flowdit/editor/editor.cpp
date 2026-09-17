@@ -28,27 +28,19 @@ namespace flowdit::editor {
             std::string selected, error;
             View view{View::dataset};
             Tool tool{Tool::none};
-            bool left{true}, closing{};
-            float left_amount{1};
-            Workspace(Renderer& renderer, int device);
+            bool left{}, closing{};
+            float left_amount{};
+            explicit Workspace(Renderer& renderer);
             void select_dataset();
             void receive();
             void draw_application();
             void draw();
         };
-        Workspace::Workspace(Renderer& source, const int device) : renderer{source}, interop{renderer.device, device}, session{SessionObserver{.notify = [] { glfwPostEmptyEvent(); }, .image = [this](const FrameInfo& info, const std::uint8_t* pixels, const std::uint32_t width, const std::uint32_t height, const ::cuda::stream_ref stream) {
-            if (!info.training_step) interop.publish(info, pixels, width, height, stream);
+        Workspace::Workspace(Renderer& source) : renderer{source}, interop{renderer.device, 0}, session{SessionObserver{.notify = [] { glfwPostEmptyEvent(); }, .image = [this](const FrameInfo& info, const std::uint8_t* pixels, const std::uint32_t width, const std::uint32_t height, const ::cuda::stream_ref stream) {
+            interop.publish(info, pixels, width, height, stream);
         }}} {
-            training.device = device;
-            sampling.device = device;
             try {
                 catalog.scan();
-                for (const auto& [key, entry] : catalog.datasets)
-                    if (entry.kind && entry.error.empty()) {
-                        selected = key;
-                        select_dataset();
-                        break;
-                    }
             } catch (const std::exception& failure) {
                 error = failure.what();
             }
@@ -58,15 +50,12 @@ namespace flowdit::editor {
             dataset.open(renderer, entry);
             training.select(renderer, catalog, entry);
             if (sampling.picture.texture) renderer.retire(sampling.picture.texture);
-            const int device = sampling.device;
             sampling = {};
-            sampling.device = device;
             sampling.select(entry);
             view = View::dataset;
             tool = Tool::none;
         }
         void Workspace::receive() {
-            const bool was_busy = status.busy;
             auto update = session.receive();
             status = update.status;
             for (const auto& frame : interop.receive()) {
@@ -75,22 +64,20 @@ namespace flowdit::editor {
                     renderer.discard(*slot.timeline, frame.ready);
                     continue;
                 }
-                const auto texture = renderer.texture({frame.width, frame.height});
+                const auto texture = sampling.preview(renderer, frame.info);
                 renderer.copy(texture, slot.buffer, *slot.timeline, frame.ready);
-                sampling.preview(renderer, frame.info, texture);
             }
             training.accept(renderer, update);
-            sampling.accept(renderer, update);
-            if (!selected.empty() && (!update.checkpoints.empty() || (was_busy && !status.busy && status.mode == Mode::training))) {
+            sampling.accept(update);
+            if (!selected.empty() && !update.checkpoints.empty()) {
                 try {
                     auto& entry = catalog.datasets.at(selected);
-                    catalog.refresh(entry);
+                    for (const auto& checkpoint : update.checkpoints) catalog.refresh(entry, checkpoint);
                     if (sampling.checkpoint.path.empty()) sampling.select(entry);
                 } catch (const std::exception& failure) {
                     error = failure.what();
                 }
             }
-            dataset.receive(renderer);
         }
         void Workspace::draw_application() {
             const float dpi = renderer.dpi;
@@ -106,8 +93,6 @@ namespace flowdit::editor {
             draw->AddQuadFilled({x + 3 * dpi, y + 9 * dpi}, {x + 15 * dpi, y + 9 * dpi}, {x + 14 * dpi, y + 12 * dpi}, {x + 2 * dpi, y + 12 * dpi}, accent);
             ImGui::SetCursorPos({52 * dpi, (height - ImGui::GetTextLineHeight()) * 0.5F});
             ImGui::TextDisabled("FlowDiT");
-            ImGui::SetCursorPos({112 * dpi, (height - 24 * dpi) * 0.5F});
-            if (panel_button("toggle-sidebar", left)) left = !left;
             const auto now = std::chrono::steady_clock::now();
             const bool current = status.mode == Mode::training ? training.attached : sampling.attached;
             const bool completed = current && !status.busy && status.stage == Stage::complete && now - status.ended < std::chrono::seconds{1};
@@ -159,7 +144,7 @@ namespace flowdit::editor {
                 if (completed) color.w *= 1 - std::chrono::duration<float>(now - status.ended).count();
                 draw->AddRectFilled(origin, {origin.x + width * progress, origin.y + 2 * dpi}, ImGui::GetColorU32(color));
             }
-            renderer.window.drag_region = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) ? std::array<float, 4>{} : std::array<float, 4>{148 * dpi, 0, status_x - 22 * dpi, height};
+            renderer.window.drag_region = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) ? std::array<float, 4>{} : std::array<float, 4>{112 * dpi, 0, status_x - 22 * dpi, height};
             ImGui::EndChild();
         }
         void Workspace::draw() {
@@ -169,7 +154,6 @@ namespace flowdit::editor {
                 if (ImGui::Shortcut(ImGuiKey_F11, ImGuiInputFlags_RouteGlobal | ImGuiInputFlags_RouteOverActive) || (!editing && !popup && ImGui::Shortcut(ImGuiKey_F, ImGuiInputFlags_RouteGlobal))) renderer.window.toggle_fullscreen();
                 if (!editing && !popup) {
                     if (ImGui::Shortcut(ImGuiKey_GraveAccent, ImGuiInputFlags_RouteGlobal)) left = !left;
-                    if (!ImGui::IsAnyItemActive() && ImGui::Shortcut(ImGuiKey_Escape, ImGuiInputFlags_RouteGlobal)) glfwSetWindowShouldClose(renderer.window.window, GLFW_TRUE);
                 }
             }
             const auto* viewport = ImGui::GetMainViewport();
@@ -186,7 +170,7 @@ namespace flowdit::editor {
             ImGui::BeginDisabled(closing);
             draw_application();
             const float target = static_cast<float>(left);
-            left_amount = std::lerp(left_amount, target, std::min(1.0F, ImGui::GetIO().DeltaTime / 0.045F));
+            left_amount = std::lerp(left_amount, target, std::min(ImGui::GetIO().DeltaTime, 1.0F / 60) / 0.045F);
             if (std::abs(left_amount - target) < 0.01F) left_amount = target;
             const float visible_width = left_width * left_amount;
             if (left_amount > 0) {
@@ -206,7 +190,6 @@ namespace flowdit::editor {
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, {0.24F, 0.30F, 0.33F, 0.75F});
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, {0.28F, 0.37F, 0.40F, 0.85F});
                 ImGui::PushStyleColor(ImGuiCol_PlotLines, {0.44F, 0.80F, 0.87F, 0.85F});
-                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, {0.44F, 0.80F, 0.87F, 0.75F});
                 ImGui::PushStyleColor(ImGuiCol_Separator, {0.70F, 0.72F, 0.85F, 0.12F});
                 ImGui::BeginChild("sidebar", {left_width, height - 104 * dpi}, ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | input);
                 ImGui::PushID(selected.c_str());
@@ -256,14 +239,30 @@ namespace flowdit::editor {
                 if (selected != previous) select_dataset();
                 ImGui::EndChild();
                 ImGui::EndChild();
-                ImGui::PopStyleColor(9);
+                ImGui::PopStyleColor(8);
                 ImGui::PopStyleVar(7);
             }
+            dataset.receive(renderer);
             ImGui::SetCursorPos({visible_width, top});
             ImGui::BeginChild("canvas", {viewport->WorkSize.x - visible_width, height}, ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
             if (!error.empty()) ImGui::TextWrapped("%s", error.c_str());
             if ((training.attached || sampling.attached) && !status.error.empty()) ImGui::TextWrapped("%s", status.error.c_str());
-            if (view == View::dataset) dataset.draw_images(renderer);
+            if (selected.empty()) {
+                auto* draw = ImGui::GetWindowDrawList();
+                const auto origin = ImGui::GetCursorScreenPos();
+                const auto available = ImGui::GetContentRegionAvail();
+                const ImVec2 center{origin.x + available.x * 0.5F, origin.y + available.y * 0.5F};
+                constexpr const char* title = "Welcome to FlowDiT.";
+                ImGui::PushFont(nullptr, 30);
+                const auto text = ImGui::CalcTextSize(title);
+                draw->AddText(ImGui::GetFont(), ImGui::GetFontSize(), {center.x - text.x * 0.5F, center.y - 30 * dpi}, IM_COL32(218, 219, 230, 255), title);
+                ImGui::PopFont();
+                constexpr const char* subtitle = "Press ` to browse datasets.";
+                const auto hint = ImGui::CalcTextSize(subtitle);
+                draw->AddText({center.x - hint.x * 0.5F, center.y + 20 * dpi}, IM_COL32(119, 121, 137, 255), subtitle);
+                draw->AddCircle({center.x, center.y - 88 * dpi}, 14 * dpi, IM_COL32(145, 142, 225, 180), 32, 1.5F * dpi);
+                draw->AddCircleFilled({center.x + 14 * dpi, center.y - 100 * dpi}, 3 * dpi, IM_COL32(184, 182, 250, 255));
+            } else if (view == View::dataset) dataset.draw_images();
             else if (view == View::training) training.draw_images();
             else sampling.draw_images();
             ImGui::EndChild();
@@ -272,15 +271,9 @@ namespace flowdit::editor {
         }
     } // namespace
     int run(const std::span<const std::string_view> arguments) {
-        int device{};
-        for (std::size_t i = 0; i < arguments.size(); ++i) {
-            const auto option = arguments[i];
-            const auto value = arguments[++i];
-            if (option == "--device") std::from_chars(value.data(), value.data() + value.size(), device);
-            else throw std::runtime_error{"Unknown Editor option: " + std::string{option}};
-        }
+        if (!arguments.empty()) throw std::runtime_error{"Unknown Editor option: " + std::string{arguments.front()}};
         WindowPlatform window;
-        Renderer renderer{window, device};
+        Renderer renderer{window, 0};
         ImGui::StyleColorsDark();
         auto& style = ImGui::GetStyle();
         style.WindowRounding = 16;
@@ -309,10 +302,10 @@ namespace flowdit::editor {
         style.Colors[ImGuiCol_ButtonActive] = {0.30F, 0.29F, 0.38F, 1};
         style.Colors[ImGuiCol_Header] = {0.35F, 0.34F, 0.55F, 0.35F};
         style.Colors[ImGuiCol_HeaderHovered] = {0.45F, 0.44F, 0.67F, 0.35F};
-        style.Colors[ImGuiCol_CheckMark] = style.Colors[ImGuiCol_SliderGrab] = {0.63F, 0.62F, 1, 1};
-        style.Colors[ImGuiCol_NavCursor] = {0.63F, 0.62F, 1, 0.8F};
+        style.Colors[ImGuiCol_CheckMark] = {0.63F, 0.62F, 1, 1};
         {
-            Workspace workspace{renderer, device};
+            Workspace workspace{renderer};
+            auto redraw_until = std::chrono::steady_clock::now() + std::chrono::milliseconds{750};
             for (;;) {
                 const auto frame_started = std::chrono::steady_clock::now();
                 glfwPollEvents();
@@ -322,12 +315,22 @@ namespace flowdit::editor {
                 }
                 if (!renderer.begin()) continue;
                 workspace.receive();
+                const bool loading_dataset = workspace.dataset.loading.valid();
                 if (renderer.visible) workspace.draw();
                 renderer.present();
                 if (workspace.closing && workspace.status.finished) break;
+                const auto& io = ImGui::GetIO();
+                if (io.MouseDelta.x != 0 || io.MouseDelta.y != 0 || io.MouseWheel != 0 || ImGui::IsMouseClicked(ImGuiMouseButton_Left)) redraw_until = frame_started + std::chrono::milliseconds{750};
                 const bool animating = workspace.left_amount != static_cast<float>(workspace.left);
-                const double remaining = 1.0 / (animating ? 120.0 : 60.0) - std::chrono::duration<double>(std::chrono::steady_clock::now() - frame_started).count();
-                if (remaining > 0) glfwWaitEventsTimeout(remaining);
+                const bool completing = workspace.status.stage == Stage::complete && frame_started - workspace.status.ended < std::chrono::seconds{1};
+                const bool active = renderer.visible && (animating || workspace.status.busy || loading_dataset || workspace.dataset.dirty || completing || ImGui::IsAnyItemActive() || frame_started < redraw_until);
+                if (active) {
+                    const double remaining = 1.0 / (animating ? 120.0 : 60.0) - std::chrono::duration<double>(std::chrono::steady_clock::now() - frame_started).count();
+                    if (remaining > 0) glfwWaitEventsTimeout(remaining);
+                } else {
+                    glfwWaitEvents();
+                    redraw_until = std::chrono::steady_clock::now() + std::chrono::milliseconds{750};
+                }
             }
         }
         return 0;

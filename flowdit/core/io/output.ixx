@@ -8,10 +8,9 @@ export namespace flowdit {
         DatasetKind dataset_type{DatasetKind::cifar10};
         std::uint32_t patch_size{2u};
         std::uint64_t end_step{400'000u}, seed{42u};
-        int device{};
-        std::uint32_t execution_steps{10u}, log_interval{100u}, preview_interval{1'000u}, save_interval{50'000u};
+        inline static constexpr std::uint32_t execution_steps{10u}, log_interval{100u}, preview_interval{1'000u}, save_interval{50'000u};
         neural::TrainingConfiguration optimizer;
-        SamplingRequest preview;
+        inline static constexpr SamplingRequest preview{};
     };
     struct TrainingRecord final {
         std::uint64_t step{};
@@ -33,15 +32,14 @@ export namespace flowdit {
     };
     struct RunHistory final {
         std::vector<TrainingRecord> metrics;
-        std::vector<SampleInfo> samples;
+        std::filesystem::path preview;
     };
 } // namespace flowdit
 export namespace flowdit::output {
     void write_configuration(const RunConfiguration& configuration);
     RunConfiguration read_configuration(const std::filesystem::path& directory);
-    void write_png(const std::filesystem::path& path, const SamplingResult& images, std::optional<std::size_t> index = {});
+    void write_png(const std::filesystem::path& path, const SamplingResult& images);
     void write_sample(const SampleOutput& sample);
     SampleOutput read_sample(const std::filesystem::path& path);
     RunHistory read_history(const std::filesystem::path& directory);
-    std::string_view solver_name(SamplingSolver solver);
 } // namespace flowdit::output

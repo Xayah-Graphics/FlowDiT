@@ -36,12 +36,9 @@ namespace flowdit::editor {
                 elapsed_base = checkpoint.training_seconds;
                 if (checkpoint.step >= configuration.end_step) progress.stage = Stage::complete;
             }
-            for (const auto& sample : history.samples) {
-                if (sample.source != ParameterSource::exponential_average) continue;
-                if (sample.training_step >= preview.training_step) preview = sample;
-            }
-            if (!preview.path.empty()) {
-                const auto loaded = output::read_sample(preview.path);
+            if (!history.preview.empty()) {
+                const auto loaded = output::read_sample(history.preview);
+                preview = loaded.info;
                 picture.upload(renderer, loaded.images.model.image, loaded.images.labels, loaded.images.rgba.data());
             }
         } catch (const std::exception& failure) {
@@ -104,7 +101,6 @@ namespace flowdit::editor {
                     checkpoint = latest.path;
                     elapsed_base = latest.training_seconds;
                 }
-                configuration.device = device;
                 stopping = false;
                 attached = true;
                 session.start(TrainRequest{configuration, dataset, checkpoint});

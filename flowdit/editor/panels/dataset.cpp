@@ -13,7 +13,7 @@ namespace flowdit::editor {
         indices.clear();
         category = -1;
         page = 0;
-        dirty = false;
+        dirty = filter_dirty = false;
         loading = std::async(std::launch::async, [path = entry.directory, type = *entry.kind] { return std::make_shared<const Dataset>(load_dataset(type, path)); });
         error.clear();
     }
@@ -26,15 +26,18 @@ namespace flowdit::editor {
                 category = -1;
                 page = 0;
                 canvas = {};
-                dirty = true;
+                dirty = filter_dirty = true;
             } catch (const std::exception& failure) {
                 error = failure.what();
             }
         }
         if (!dirty || !dataset) return;
-        indices.clear();
-        for (std::uint32_t i = 0; i < dataset->labels.size(); ++i)
-            if (category < 0 || dataset->labels[i] == category) indices.push_back(i);
+        if (filter_dirty) {
+            indices.clear();
+            for (std::uint32_t i = 0; i < dataset->labels.size(); ++i)
+                if (category < 0 || dataset->labels[i] == category) indices.push_back(i);
+            filter_dirty = false;
+        }
         const std::size_t begin = static_cast<std::size_t>(page) * 24;
         const auto count = std::min(24uz, indices.size() - begin);
         const auto& specification = dataset->specification;
@@ -80,7 +83,7 @@ namespace flowdit::editor {
         if (show) {
             page = 0;
             canvas = {};
-            dirty = true;
+            dirty = filter_dirty = true;
         }
         return show;
     }
@@ -115,8 +118,7 @@ namespace flowdit::editor {
         if (catalog.datasets.empty()) ImGui::TextWrapped("No datasets in %s", Catalog::directory.string().c_str());
         return show;
     }
-    void DatasetPanel::draw_images(Renderer& renderer) {
-        receive(renderer);
+    void DatasetPanel::draw_images() {
         if (!picture.texture) {
             ImGui::TextDisabled(loading.valid() ? "Loading dataset..." : "Select a dataset to browse images.");
             return;

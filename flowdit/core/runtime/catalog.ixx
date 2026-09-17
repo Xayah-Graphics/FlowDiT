@@ -26,8 +26,8 @@ export namespace flowdit {
         static const std::filesystem::path directory;
         std::map<std::string, DatasetEntry> datasets;
         void scan();
-        void refresh(DatasetEntry& dataset);
+        void refresh(DatasetEntry& dataset, const std::filesystem::path& changed = {});
         RunConfiguration training(const DatasetEntry& dataset) const;
-        std::filesystem::path inference(const RunEntry& run, bool fid = false) const;
+        std::filesystem::path inference(const RunEntry& run) const;
     };
 } // namespace flowdit

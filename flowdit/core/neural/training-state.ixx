@@ -32,7 +32,6 @@ export namespace flowdit::neural {
         ParameterBuffer(::cuda::stream_ref stream, std::size_t count);
         void initialize(std::span<const float> values);
         void clear_gradients();
-        void step(const TrainingConfiguration& configuration, std::uint64_t step, std::uint64_t processed_samples, std::uint32_t samples_per_step);
         void step(const TrainingConfiguration& configuration, const std::uint64_t* step, const std::uint64_t* processed_samples, std::uint32_t samples_per_step);
         ParameterState download() const;
         void upload(const ParameterState& state);

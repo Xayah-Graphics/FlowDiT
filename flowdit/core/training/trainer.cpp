@@ -49,9 +49,7 @@ namespace flowdit {
         state.processed_samples += iterations * batch;
         state.elapsed_seconds += elapsed;
         return {
-            .step               = state.step,
             .average_loss       = accumulated_loss / static_cast<float>(iterations),
-            .samples_per_second = static_cast<double>(iterations * batch) / elapsed,
             .elapsed_seconds    = elapsed,
         };
     }
@@ -59,16 +57,6 @@ namespace flowdit {
         SamplingRuntime runtime{stream, model};
         if (source == ParameterSource::parameters) return runtime.sample(parameter_buffer.parameters.data(), request, observer);
         return runtime.sample(parameter_buffer.ema.data(), request, observer);
-    }
-    TrainingBatch Trainer::inspect() {
-        ::cuda::device_buffer<std::uint8_t> pixels{stream, ::cuda::device_default_memory_pool(stream.device()), static_cast<std::size_t>(batch) * model.configuration.image.width * model.configuration.image.height * 4uz, ::cuda::no_init};
-        kernels::unpatchify(stream, path.data(), pixels.data(), batch, {model.configuration.image.width, model.configuration.image.height, model.configuration.image.channels, model.configuration.patch_size});
-        TrainingBatch result{.step = state.step, .images = {.model = model.configuration, .nfe = 0u, .labels = std::vector<std::uint32_t>(batch), .rgba = std::vector<std::uint8_t>(pixels.size())}, .times = std::vector<float>(batch)};
-        ::cuda::copy_bytes(stream, pixels, ::cuda::std::span<std::uint8_t>{result.images.rgba.data(), result.images.rgba.size()});
-        ::cuda::copy_bytes(stream, labels, ::cuda::std::span<std::uint32_t>{result.images.labels.data(), result.images.labels.size()});
-        ::cuda::copy_bytes(stream, times, ::cuda::std::span<float>{result.times.data(), result.times.size()});
-        stream.sync();
-        return result;
     }
     void Trainer::save(const std::filesystem::path& path) const {
         const neural::ParameterState parameters = parameter_buffer.download();

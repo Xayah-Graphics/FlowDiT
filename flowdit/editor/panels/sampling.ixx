@@ -10,13 +10,13 @@ export namespace flowdit::editor {
         CheckpointEntry checkpoint;
         SamplingRequest request;
         SessionStatus progress;
-        int device{}, category{-1};
+        int category{-1};
         bool stopping{}, attached{};
         Picture picture;
         SampleInfo result;
         Canvas canvas;
-        void accept(Renderer& renderer, const SessionUpdate& update);
-        void preview(Renderer& renderer, const FrameInfo& info, std::uint64_t texture);
+        void accept(const SessionUpdate& update);
+        std::uint64_t preview(Renderer& renderer, const FrameInfo& info);
         void select(const DatasetEntry& dataset, std::string name = {}, std::size_t index = 0);
         bool draw(Renderer& renderer, Session& session, SessionStatus& status, const Catalog& catalog, const DatasetEntry& dataset);
         void draw_images();

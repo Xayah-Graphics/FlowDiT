@@ -63,17 +63,6 @@ export namespace flowdit::neural {
         std::size_t byte_count;
         TransformerWorkspaceLayout(const TransformerConfiguration& configuration, std::uint32_t batch);
     };
-    template <TransformerConfiguration Configuration, std::uint32_t Batch>
-    struct StaticTransformerWorkspace final {
-        static consteval std::size_t align(const std::size_t value) {
-            return (value + 255uz) & ~255uz;
-        }
-        inline static constexpr std::size_t token_count        = static_cast<std::size_t>(Batch) * Configuration.sequence;
-        inline static constexpr std::size_t output_byte_count  = align(token_count * Configuration.width * sizeof(float));
-        inline static constexpr std::size_t block_byte_count   = align(static_cast<std::size_t>(Batch) * 6uz * Configuration.width * sizeof(float)) + align(token_count * Configuration.width * sizeof(float)) + align(token_count * sizeof(float)) * 2uz + align(token_count * 3uz * Configuration.width * sizeof(float)) + align(token_count * Configuration.width * sizeof(float)) + align(static_cast<std::size_t>(Batch) * Configuration.head_count * Configuration.sequence * sizeof(float)) + align(token_count * Configuration.width * sizeof(float)) * 3uz + align(token_count * sizeof(float)) * 2uz + align(token_count * Configuration.mlp_width * sizeof(float)) * 2uz + align(token_count * Configuration.width * sizeof(float)) * 2uz;
-        inline static constexpr std::size_t scratch_byte_count = align(token_count * Configuration.width * sizeof(float)) * 4uz + align(static_cast<std::size_t>(Batch) * 6uz * Configuration.width * sizeof(float)) + align(token_count * 3uz * Configuration.width * sizeof(float)) + align(static_cast<std::size_t>(Batch) * Configuration.head_count * Configuration.sequence * sizeof(float)) + align(token_count * Configuration.mlp_width * sizeof(float));
-        inline static constexpr std::size_t byte_count         = block_byte_count * Configuration.block_count - output_byte_count + scratch_byte_count;
-    };
     struct Transformer final {
         MatmulRuntime& matmul;
         TransformerParameterLayout parameters;

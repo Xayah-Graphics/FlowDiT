@@ -31,26 +31,35 @@ namespace flowdit {
             }
         }
     }
-    void Catalog::refresh(DatasetEntry& dataset) {
-        dataset.runs.clear();
-        const auto runs = dataset.directory / ".flowdit" / "runs";
-        if (!std::filesystem::exists(runs)) return;
-        for (const auto& folder : std::filesystem::directory_iterator{runs}) {
-            if (!folder.is_directory()) continue;
-            auto& run = dataset.runs[folder.path().filename().string()];
+    void Catalog::refresh(DatasetEntry& dataset, const std::filesystem::path& changed) {
+        std::vector<std::filesystem::path> directories;
+        if (changed.empty()) {
+            dataset.runs.clear();
+            const auto runs = dataset.directory / ".flowdit" / "runs";
+            if (!std::filesystem::exists(runs)) return;
+            for (const auto& folder : std::filesystem::directory_iterator{runs})
+                if (folder.is_directory()) directories.push_back(folder.path());
+        } else directories.push_back(changed.filename() == "final.safetensors" ? changed.parent_path() : changed.parent_path().parent_path());
+        for (const auto& directory : directories) {
+            auto& run = dataset.runs[directory.filename().string()];
+            run.error.clear();
             try {
-                run.configuration = output::read_configuration(folder.path());
+                run.configuration = output::read_configuration(directory);
                 run.configuration.dataset = dataset.directory;
                 run.configuration.dataset_type = *dataset.kind;
                 std::vector<std::filesystem::path> paths;
-                const auto checkpoints = folder.path() / "checkpoints";
-                if (std::filesystem::exists(checkpoints))
-                    for (const auto& entry : std::filesystem::directory_iterator{checkpoints})
-                        if (entry.is_regular_file() && entry.path().extension() == ".safetensors") paths.push_back(entry.path());
-                if (std::filesystem::exists(folder.path() / "final.safetensors")) paths.push_back(folder.path() / "final.safetensors");
+                if (changed.empty()) {
+                    const auto checkpoints = directory / "checkpoints";
+                    if (std::filesystem::exists(checkpoints))
+                        for (const auto& entry : std::filesystem::directory_iterator{checkpoints})
+                            if (entry.is_regular_file() && entry.path().extension() == ".safetensors") paths.push_back(entry.path());
+                    if (std::filesystem::exists(directory / "final.safetensors")) paths.push_back(directory / "final.safetensors");
+                } else paths.push_back(changed);
                 for (const auto& path : paths) {
-                    auto& checkpoint = run.checkpoints.emplace_back();
-                    checkpoint.path = path;
+                    auto found = std::ranges::find(run.checkpoints, path, &CheckpointEntry::path);
+                    if (found == run.checkpoints.end()) found = run.checkpoints.emplace(run.checkpoints.end());
+                    auto& checkpoint = *found;
+                    checkpoint = {.path = path};
                     try {
                         const auto file = serialization::safetensors::read(path, std::array<std::string_view, 1>{"training.state"});
                         if (file.metadata.at("flowdit.system") != "flow-matching") throw std::runtime_error{"Unsupported checkpoint format"};
@@ -81,8 +90,8 @@ namespace flowdit {
         result.output = dataset.directory / ".flowdit" / "runs" / std::format("{:%Y%m%d-%H%M%S}", std::chrono::floor<std::chrono::microseconds>(std::chrono::system_clock::now()));
         return result;
     }
-    std::filesystem::path Catalog::inference(const RunEntry& run, const bool fid) const {
+    std::filesystem::path Catalog::inference(const RunEntry& run) const {
         const auto stamp = std::format("{:%Y%m%d-%H%M%S}", std::chrono::floor<std::chrono::microseconds>(std::chrono::system_clock::now()));
-        return run.configuration.output / (fid ? "fid" : "inference") / (fid ? stamp : stamp + ".png");
+        return run.configuration.output / "inference" / (stamp + ".png");
     }
 } // namespace flowdit

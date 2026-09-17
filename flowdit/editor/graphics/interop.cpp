@@ -57,7 +57,7 @@ namespace flowdit::editor {
         stream.sync();
         {
             const std::lock_guard lock{mutex};
-            frames.push_back({info, index, slot.value, width, height});
+            frames.push_back({info, index, slot.value});
         }
         glfwPostEmptyEvent();
     }

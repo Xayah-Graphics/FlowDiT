@@ -101,7 +101,7 @@ target_include_directories(flowdit_core PUBLIC "${FLOWDIT_CLION_CUDA_INCLUDE_DIR
 target_compile_definitions(flowdit_core PRIVATE FLOWDIT_PROJECT_VERSION="${PROJECT_VERSION}"
         FLOWDIT_DATA_DIRECTORY="${PROJECT_SOURCE_DIR}/data")
 target_link_libraries(flowdit_core PUBLIC CCCL::libcudacxx CUDA::toolkit Threads::Threads
-        PRIVATE CUDA::cublas CUDA::cublasLt CUDA::curand nlohmann_json::nlohmann_json flowdit::stb)
+        PRIVATE CUDA::cublas CUDA::cublasLt nlohmann_json::nlohmann_json flowdit::stb)
 
 # ============================================================================
 # Editor
@@ -138,7 +138,7 @@ if (FLOWDIT_BUILD_EDITOR)
             flowdit/editor/panels/sampling.ixx)
     target_compile_definitions(flowdit_editor PRIVATE GLFW_INCLUDE_NONE GLFW_EXPOSE_NATIVE_WIN32
             FLOWDIT_SHADER_DIRECTORY="${FLOWDIT_SHADER_OUTPUT_DIRECTORY}")
-    target_link_libraries(flowdit_editor PRIVATE flowdit_core flowdit::vulkan flowdit::imgui CUDA::cudart dwmapi)
+    target_link_libraries(flowdit_editor PRIVATE flowdit_core flowdit::vulkan flowdit::imgui CUDA::cudart dwmapi imm32)
     add_dependencies(flowdit_editor flowdit_shaders)
 endif ()
 

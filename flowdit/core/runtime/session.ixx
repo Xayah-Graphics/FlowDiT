@@ -14,29 +14,22 @@ export namespace flowdit {
     };
     struct SampleRequest final {
         std::filesystem::path checkpoint, output;
-        int device{};
-        ParameterSource source{ParameterSource::exponential_average};
         SamplingRequest sampling;
-        bool fid{};
     };
-    enum class Mode { none, training, sampling, fid };
-    enum class Stage { idle, loading, optimizing, paused, preview_parameters, preview_ema, sampling, saving, complete, stopped, failed };
-    inline constexpr std::array<std::string_view, 11> stage_names{"Idle", "Loading", "Training", "Paused", "Raw preview", "EMA preview", "Sampling", "Saving", "Complete", "Stopped", "Failed"};
+    enum class Mode { none, training, sampling };
+    enum class Stage { idle, loading, optimizing, preview_parameters, preview_ema, sampling, saving, complete, stopped, failed };
+    inline constexpr std::array<std::string_view, 10> stage_names{"Idle", "Loading", "Training", "Raw preview", "EMA preview", "Sampling", "Saving", "Complete", "Stopped", "Failed"};
     struct SessionStatus final {
         Mode mode{Mode::none};
         Stage stage{Stage::idle};
         bool busy{}, closing{}, finished{};
         TrainingState training;
         SamplingProgress sampling;
-        std::uint32_t exported{};
         std::chrono::steady_clock::time_point started{}, ended{};
         std::string error;
     };
     struct FrameInfo final {
-        std::uint64_t training_step{};
-        ParameterSource source{ParameterSource::exponential_average};
         SamplingRequest request;
-        SamplingProgress progress;
         ModelConfiguration model;
     };
     struct SessionObserver final {
@@ -48,17 +41,11 @@ export namespace flowdit {
         std::vector<TrainingRecord> metrics;
         std::vector<std::shared_ptr<const SampleOutput>> samples;
         std::vector<std::filesystem::path> checkpoints;
-        std::shared_ptr<const TrainingBatch> batch;
-        std::vector<std::string> messages;
     };
     struct Session final {
         explicit Session(SessionObserver events = {});
         ~Session();
         void start(std::variant<TrainRequest, SampleRequest> request);
-        void pause();
-        void resume();
-        void save();
-        void inspect();
         void stop();
         void shutdown();
         SessionUpdate receive();
@@ -70,14 +57,11 @@ export namespace flowdit {
         SessionUpdate update;
         std::optional<std::variant<TrainRequest, SampleRequest>> requested;
         std::stop_source cancellation;
-        std::atomic_bool pause_requested{}, save_requested{}, inspect_requested{};
         std::unique_ptr<Sampler> sampler;
         std::filesystem::path sampler_checkpoint;
-        int sampler_device{};
-        ParameterSource sampler_source{};
         std::jthread worker;
-        void report(Stage stage, std::string message = {});
-        SamplingObserver observe(const FrameInfo& info);
+        void report(Stage stage);
+        SamplingObserver observe(const FrameInfo* info = nullptr);
         void run();
         void execute(const TrainRequest& request);
         void execute(const SampleRequest& request);

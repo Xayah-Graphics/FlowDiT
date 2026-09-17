@@ -1,5 +1,6 @@
 module;
 #include <Windows.h>
+#include <imm.h>
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
@@ -37,12 +38,19 @@ namespace flowdit::editor {
         io.IniFilename         = nullptr;
         io.BackendRendererName = "flowdit_shader_object";
         io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_RendererHasTextures;
-        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
         io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/SegUIVar.ttf");
-        ImFontConfig chinese;
-        chinese.MergeMode = true;
-        io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/msyh.ttc", 0, &chinese);
         if (!ImGui_ImplGlfw_InitForVulkan(window.window, true)) throw std::runtime_error{"Cannot initialize ImGui input"};
+        // Keep the IME from consuming shortcuts outside text editing.
+        ImmAssociateContextEx(window.native_window, nullptr, 0);
+        static const auto position_ime = ImGui::GetPlatformIO().Platform_SetImeDataFn;
+        ImGui::GetPlatformIO().Platform_SetImeDataFn = [](ImGuiContext* context, ImGuiViewport* viewport, ImGuiPlatformImeData* data) {
+            ImmAssociateContextEx(static_cast<HWND>(viewport->PlatformHandleRaw), nullptr, data->WantTextInput ? IACE_DEFAULT : 0);
+            position_ime(context, viewport, data);
+        };
+        glfwSetKeyCallback(window.window, [](GLFWwindow* target, const int key, const int scancode, const int action, const int mods) {
+            if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) glfwSetWindowShouldClose(target, GLFW_TRUE);
+            if (key != GLFW_KEY_TAB && key != GLFW_KEY_ESCAPE) ImGui_ImplGlfw_KeyCallback(target, key, scancode, action, mods);
+        });
         recreate();
     }
     Renderer::~Renderer() {
@@ -121,7 +129,7 @@ namespace flowdit::editor {
     }
     void Renderer::upload(const std::uint64_t id, const void* pixels, const int width, const int height, const bool initial) {
         auto& image   = textures.at(id).image;
-        auto& staging = frames[frame_index].uploads.emplace_back(device, std::size_t(width) * height * (image.format == vk::Format::eR8Unorm ? 1 : 4), true);
+        auto& staging = frames[frame_index].uploads.emplace_back(device, std::size_t(width) * height * 4uz, true);
         std::memcpy(staging.mapped, pixels, staging.size);
         const auto& command = commands[frame_index];
         const vk::ImageMemoryBarrier2 transfer{initial ? vk::PipelineStageFlagBits2::eNone : vk::PipelineStageFlagBits2::eFragmentShader, initial ? vk::AccessFlags2{} : vk::AccessFlagBits2::eShaderSampledRead, vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, initial ? vk::ImageLayout::eUndefined : vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eTransferDstOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};

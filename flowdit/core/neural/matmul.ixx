@@ -7,7 +7,6 @@ export namespace flowdit::neural {
     enum class MatmulEpilogue : std::uint8_t {
         none,
         bias,
-        gelu_bias,
         gelu_aux_bias,
         gelu_gradient,
         bias_gradient,

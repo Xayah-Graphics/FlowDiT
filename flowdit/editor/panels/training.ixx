@@ -8,7 +8,6 @@ export namespace flowdit::editor {
     struct TrainingPanel final {
         RunConfiguration configuration;
         SessionStatus progress;
-        int device{};
         std::string run, error;
         std::vector<TrainingRecord> metrics;
         Picture picture;

@@ -8,14 +8,13 @@ namespace flowdit::neural {
     namespace {
         cublasLtEpilogue_t epilogue_type(const MatmulEpilogue epilogue) {
             if (epilogue == MatmulEpilogue::bias) return CUBLASLT_EPILOGUE_BIAS;
-            if (epilogue == MatmulEpilogue::gelu_bias) return CUBLASLT_EPILOGUE_GELU_BIAS;
             if (epilogue == MatmulEpilogue::gelu_aux_bias) return CUBLASLT_EPILOGUE_GELU_AUX_BIAS;
             if (epilogue == MatmulEpilogue::gelu_gradient) return CUBLASLT_EPILOGUE_DGELU;
             if (epilogue == MatmulEpilogue::bias_gradient) return CUBLASLT_EPILOGUE_BGRADA;
             return CUBLASLT_EPILOGUE_DEFAULT;
         }
         bool uses_bias(const MatmulEpilogue epilogue) {
-            return epilogue == MatmulEpilogue::bias || epilogue == MatmulEpilogue::gelu_bias || epilogue == MatmulEpilogue::gelu_aux_bias || epilogue == MatmulEpilogue::bias_gradient;
+            return epilogue == MatmulEpilogue::bias || epilogue == MatmulEpilogue::gelu_aux_bias || epilogue == MatmulEpilogue::bias_gradient;
         }
         bool uses_auxiliary(const MatmulEpilogue epilogue) {
             return epilogue == MatmulEpilogue::gelu_aux_bias || epilogue == MatmulEpilogue::gelu_gradient;

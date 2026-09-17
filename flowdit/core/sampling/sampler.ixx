@@ -9,14 +9,13 @@ import std;
 export namespace flowdit {
     struct Sampler final {
         ModelConfiguration configuration;
-        Sampler(const std::filesystem::path& checkpoint, int device_ordinal, ParameterSource source = ParameterSource::exponential_average);
+        Sampler(const std::filesystem::path& checkpoint, int device_ordinal);
         std::optional<SamplingResult> sample(const SamplingRequest& request, const SamplingObserver& observer = {});
 
     private:
         ::cuda::stream stream;
         neural::MatmulRuntime matmul;
         FlowDiT model;
-        std::vector<float> checkpoint_values;
         neural::InferenceParameterBuffer parameters;
         SamplingRuntime runtime;
     };
