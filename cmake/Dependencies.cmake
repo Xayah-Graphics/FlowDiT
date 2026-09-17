@@ -10,10 +10,6 @@ FetchContent_Declare(imgui
         URL "https://codeload.github.com/ocornut/imgui/zip/b334d19b667958ed970000073644d911fae17e57"
         URL_HASH SHA256=504BC8171B80B8C92F035EBC899F6B3086C9CFA56EFADEE4962753DEB38626A2
         SYSTEM EXCLUDE_FROM_ALL)
-FetchContent_Declare(implot
-        GIT_REPOSITORY "https://github.com/epezent/implot.git"
-        GIT_TAG 7eeb9168d2e5e6b14e266d8782ecf7e649dfc3a4
-        SYSTEM EXCLUDE_FROM_ALL)
 
 FetchContent_Declare(
         nlohmann_json

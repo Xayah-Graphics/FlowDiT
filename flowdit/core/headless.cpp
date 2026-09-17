@@ -3,6 +3,7 @@ module;
 #include <flowdit/cuda.h>
 module flowdit.headless;
 import flowdit.runtime.session;
+import flowdit.runtime.catalog;
 import std;
 namespace flowdit::headless {
     namespace {
@@ -26,46 +27,72 @@ namespace flowdit::headless {
     int run(const std::span<const std::string_view> arguments) {
         if (arguments.empty() || arguments.front() == "--help") {
             std::println(R"(FlowDiT
-  flowdit --gui [--dataset-type cifar10|mnist] [--dataset DIRECTORY] [--output DIRECTORY] [--checkpoint FILE] [--device N]
-  flowdit train DATASET OUTPUT [END_STEP] [resume] [options]
-  flowdit sample CHECKPOINT OUTPUT.png [CLASS|all] [euler|heun|rk4] [STEPS] [GUIDANCE] [SEED]
-  flowdit sample-fid CHECKPOINT OUTPUT_DIRECTORY [euler|heun|rk4] [STEPS] [GUIDANCE] [SEED]
+  flowdit --gui [--device N]
+  flowdit list [DATASET]
+  flowdit train DATASET [--run RUN] [--steps N] [options]
+  flowdit sample DATASET [--run RUN] [--checkpoint NAME] [options]
+  flowdit sample-fid DATASET [--run RUN] [--checkpoint NAME] [options]
 
 Train options:
-  --dataset-type cifar10|mnist
-  --checkpoint FILE   --device N           --seed N
+  --device N          --seed N
   --execution-steps N  --log-interval N     --save-interval N
   --preview-interval N --preview-steps N    --learning-rate VALUE
 
+Sample options:
+  --class all|N       --solver euler|heun|rk4
+  --steps N           --guidance VALUE      --seed N      --device N
+
+DATASET is a directory name in the compiled data root. RUN and NAME come from list.
+New training creates a run; --run resumes its highest-step checkpoint.
+Sampling defaults to the newest run and its highest-step checkpoint.
+All outputs are stored beneath DATASET/.flowdit/runs/RUN.
 Training and standalone sampling are exclusive. Training retains periodic raw/EMA previews.
 sample-fid exports 50,000 PNGs and manifest.csv. Ctrl+C stops at a complete step.)");
+            std::println("\nData root: {}", Catalog::directory.string());
             return 0;
         }
+        Catalog catalog;
+        catalog.scan();
+        const auto command = arguments.front();
+        if (command == "list") {
+            std::println("Data root: {}", Catalog::directory.string());
+            for (const auto& [name, dataset] : catalog.datasets) {
+                if (arguments.size() > 1 && name != arguments[1]) continue;
+                std::println("{} | {} | {}", name, dataset.name, !dataset.error.empty() ? dataset.error : dataset.kind ? std::format("{} images", dataset.count) : "Unsupported dataset format");
+                for (const auto& [run_name, run] : dataset.runs) {
+                    std::println("  {}{}", run_name, run.error.empty() ? "" : " | " + run.error);
+                    for (const auto& checkpoint : run.checkpoints) std::println("    {} | step {}{}", checkpoint.path.filename().string(), checkpoint.step, checkpoint.error.empty() ? "" : " | " + checkpoint.error);
+                }
+            }
+            return 0;
+        }
+        const auto& dataset = catalog.datasets.at(std::string{arguments[1]});
+        if (!dataset.error.empty()) throw std::runtime_error{dataset.error};
+        if (!dataset.kind) throw std::runtime_error{"Unsupported dataset format: " + dataset.name};
+        std::string run_name;
+        for (std::size_t i = 2; i < arguments.size(); i += 2)
+            if (arguments[i] == "--run") run_name = arguments[i + 1];
         interrupted                 = 0;
         const auto previous_handler = std::signal(SIGINT, interrupt);
         Session session;
-        const auto command = arguments.front();
         if (command == "train") {
             TrainRequest request;
             auto& config      = request.configuration;
-            config.dataset    = arguments[1];
-            config.output     = arguments[2];
-            std::size_t index = 3;
-            if (index < arguments.size() && !arguments[index].starts_with("--") && arguments[index] != "resume") config.end_step = number<std::uint64_t>(arguments[index++]);
-            if (index < arguments.size() && arguments[index] == "resume") {
-                const auto end_step = config.end_step;
-                const auto dataset  = config.dataset;
-                config              = output::read_configuration(config.output);
-                config.dataset      = dataset;
-                config.end_step     = end_step;
-                request.checkpoint  = output::latest_checkpoint(config.output);
-                ++index;
+            config = catalog.training(dataset);
+            if (!run_name.empty()) {
+                const auto& run = dataset.runs.at(run_name);
+                if (!run.error.empty()) throw std::runtime_error{run.error};
+                if (run.checkpoints.empty()) throw std::runtime_error{"No checkpoint in run " + run_name};
+                const auto& checkpoint = run.checkpoints.front();
+                if (!checkpoint.error.empty()) throw std::runtime_error{checkpoint.error};
+                config = run.configuration;
+                request.checkpoint = checkpoint.path;
             }
-            for (; index < arguments.size(); ++index) {
+            for (std::size_t index = 2; index < arguments.size(); ++index) {
                 const auto option = arguments[index];
                 const auto value  = arguments[++index];
-                if (option == "--dataset-type") config.dataset_type = dataset_kind(value);
-                else if (option == "--checkpoint") request.checkpoint = value;
+                if (option == "--run") continue;
+                if (option == "--steps") config.end_step = number<std::uint64_t>(value);
                 else if (option == "--device") config.device = number<int>(value);
                 else if (option == "--seed") config.seed = number<std::uint64_t>(value);
                 else if (option == "--execution-steps") config.execution_steps = number<std::uint32_t>(value);
@@ -81,17 +108,33 @@ sample-fid exports 50,000 PNGs and manifest.csv. Ctrl+C stops at a complete step
             request.dataset = std::make_shared<const Dataset>(load_dataset(config.dataset_type, config.dataset));
             session.start(std::move(request));
         } else if (command == "sample" || command == "sample-fid") {
-            SampleRequest request{.checkpoint = arguments[1], .output = arguments[2]};
-            request.fid       = command == "sample-fid";
-            std::size_t index = 3;
-            if (!request.fid && index < arguments.size()) {
-                if (arguments[index] != "all") request.sampling.class_index = number<std::uint32_t>(arguments[index]);
-                ++index;
+            if (dataset.runs.empty()) throw std::runtime_error{"No training runs for " + dataset.name};
+            const auto& run = run_name.empty() ? dataset.runs.begin()->second : dataset.runs.at(run_name);
+            if (!run.error.empty()) throw std::runtime_error{run.error};
+            if (run.checkpoints.empty()) throw std::runtime_error{"No checkpoints in the selected run"};
+            SampleRequest request;
+            request.fid = command == "sample-fid";
+            request.output = catalog.inference(run, request.fid);
+            const CheckpointEntry* selected = &run.checkpoints.front();
+            for (std::size_t index = 2; index < arguments.size(); ++index) {
+                const auto option = arguments[index];
+                const auto value = arguments[++index];
+                if (option == "--run") continue;
+                if (option == "--checkpoint") {
+                    const auto found = std::ranges::find(run.checkpoints, value, [](const CheckpointEntry& entry) { return entry.path.filename().string(); });
+                    if (found == run.checkpoints.end()) throw std::runtime_error{"Unknown checkpoint: " + std::string{value}};
+                    selected = &*found;
+                } else if (option == "--class") {
+                    if (value != "all") request.sampling.class_index = number<std::uint32_t>(value);
+                } else if (option == "--solver") request.sampling.solver = solver(value);
+                else if (option == "--steps") request.sampling.step_count = number<std::uint32_t>(value);
+                else if (option == "--guidance") request.sampling.guidance = number<float>(value);
+                else if (option == "--seed") request.sampling.seed = number<std::uint64_t>(value);
+                else if (option == "--device") request.device = number<int>(value);
+                else throw std::runtime_error{"Unknown sampling option: " + std::string{option}};
             }
-            if (index < arguments.size()) request.sampling.solver = solver(arguments[index++]);
-            if (index < arguments.size()) request.sampling.step_count = number<std::uint32_t>(arguments[index++]);
-            if (index < arguments.size()) request.sampling.guidance = number<float>(arguments[index++]);
-            if (index < arguments.size()) request.sampling.seed = number<std::uint64_t>(arguments[index++]);
+            if (!selected->error.empty()) throw std::runtime_error{selected->error};
+            request.checkpoint = selected->path;
             session.start(std::move(request));
         } else throw std::runtime_error{"Unknown FlowDiT command"};
         bool closing{};

@@ -20,5 +20,5 @@ export namespace flowdit::serialization::safetensors {
     };
     void write(const std::filesystem::path& path, std::string_view system, std::span<const TensorView> tensors, const std::map<std::string, std::string>& metadata = {});
     std::map<std::string, std::string> read_metadata(const std::filesystem::path& path);
-    File read(const std::filesystem::path& path);
+    File read(const std::filesystem::path& path, std::span<const std::string_view> names = {});
 } // namespace flowdit::serialization::safetensors

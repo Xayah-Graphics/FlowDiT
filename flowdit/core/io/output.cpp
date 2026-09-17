@@ -112,7 +112,10 @@ namespace flowdit::output {
     }
     RunHistory read_history(const std::filesystem::path& directory) {
         RunHistory result;
-        std::ifstream csv{directory / "training.csv"};
+        std::ifstream csv;
+        csv.exceptions(std::ios::badbit | std::ios::failbit);
+        csv.open(directory / "training.csv");
+        csv.exceptions(std::ios::badbit);
         std::string line;
         std::getline(csv, line);
         while (std::getline(csv, line)) {
@@ -122,6 +125,7 @@ namespace flowdit::output {
             row >> record.step >> record.loss >> record.samples_per_second >> record.training_seconds;
             result.metrics.push_back(record);
         }
+        if (!std::filesystem::exists(directory / "samples")) return result;
         for (const auto& entry : std::filesystem::directory_iterator{directory / "samples"}) {
             if (entry.path().extension() != ".json") continue;
             std::ifstream file{entry.path()};
@@ -131,19 +135,7 @@ namespace flowdit::output {
             result.samples.push_back(std::move(info));
         }
         std::ranges::sort(result.samples, {}, &SampleInfo::training_step);
-        for (const auto& entry : std::filesystem::directory_iterator{directory / "checkpoints"})
-            if (entry.path().extension() == ".safetensors") result.checkpoints.push_back(entry.path());
-        if (std::filesystem::exists(directory / "final.safetensors")) result.checkpoints.push_back(directory / "final.safetensors");
-        std::ranges::sort(result.checkpoints);
         return result;
-    }
-    std::filesystem::path latest_checkpoint(const std::filesystem::path& directory) {
-        std::filesystem::path latest;
-        if (std::filesystem::exists(directory / "final.safetensors")) latest = directory / "final.safetensors";
-        for (const auto& entry : std::filesystem::directory_iterator{directory / "checkpoints"})
-            if (entry.path().extension() == ".safetensors" && (latest.empty() || entry.last_write_time() > std::filesystem::last_write_time(latest))) latest = entry.path();
-        if (latest.empty()) throw std::runtime_error{"No checkpoint in " + directory.string()};
-        return latest;
     }
     std::string_view solver_name(const SamplingSolver solver) {
         switch (solver) {

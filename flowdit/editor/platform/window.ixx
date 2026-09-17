@@ -8,14 +8,17 @@ export namespace flowdit::editor {
         GLFWwindow* window{};
         HWND native_window{};
         std::array<float, 4> drag_region{};
+        bool fullscreen{};
         WindowPlatform();
         ~WindowPlatform();
         WindowPlatform(const WindowPlatform&)            = delete;
         WindowPlatform& operator=(const WindowPlatform&) = delete;
-        std::optional<std::string> choose_path(bool directory);
+        void toggle_fullscreen();
 
     private:
         WNDPROC original_window_proc{};
+        WINDOWPLACEMENT windowed_placement{sizeof(WINDOWPLACEMENT)};
+        LONG_PTR windowed_style{};
         static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam);
     };
 } // namespace flowdit::editor

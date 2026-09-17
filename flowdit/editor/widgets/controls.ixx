@@ -1,6 +1,11 @@
+module;
+#include <imgui.h>
 export module flowdit.editor.widgets.controls;
-import flowdit.editor.platform.window;
 import std;
 export namespace flowdit::editor {
-    bool path_field(const char* label, std::string& path, WindowPlatform& window, bool directory);
+    bool text_button(const char* label);
+    bool tool_button(const char* label, bool selected, float width);
+    void number_field(const char* label, ImGuiDataType type, void* value, const char* format = nullptr, bool stacked = false);
+    std::string run_label(std::string_view name);
+    bool panel_button(const char* id, bool open);
 }

@@ -1,6 +1,7 @@
 module;
 #include <imgui.h>
 module flowdit.editor.viewing.canvas;
+import flowdit.editor.widgets.controls;
 import std;
 namespace flowdit::editor {
     void Picture::upload(Renderer& renderer, const ImageSpecification& image, const std::span<const std::uint32_t> classes, const std::uint8_t* pixels) {
@@ -18,14 +19,14 @@ namespace flowdit::editor {
         const float count = static_cast<float>(picture.labels.size());
         const float dpi = ImGui::GetStyle().FontScaleDpi;
         if (selected >= 0) {
-            if (ImGui::Button("Back") || (ImGui::IsKeyPressed(ImGuiKey_Escape) && !ImGui::IsAnyItemActive() && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))) {
+            if (text_button("Back")) {
                 selected = -1;
                 restore_scroll = true;
             }
             ImGui::SameLine();
-            if (ImGui::Button("Fit")) fit = true;
+            if (text_button("Fit")) fit = true;
             ImGui::SameLine();
-            if (ImGui::Button("1:1")) {
+            if (text_button("1:1")) {
                 fit = false;
                 zoom = 1;
                 pan = {};
@@ -40,14 +41,15 @@ namespace flowdit::editor {
             restore_scroll = false;
             ImGui::BeginChild("grid");
             const auto available = ImGui::GetContentRegionAvail();
-            const float gap = 16 * dpi;
-            const int columns = picture.labels.size() > 24 ? 10 : std::max(1, std::min(6, static_cast<int>((available.x + gap) / (100 * dpi + gap))));
-            const float thumbnail = std::min(112 * dpi, (available.x - (columns - 1) * gap) / columns);
-            const float height = thumbnail * image_height / image_width;
-            const float row_height = height + ImGui::GetTextLineHeight() + 16 * dpi;
+            const bool preview = picture.labels.size() > 24;
+            const float gap = (preview ? 8 : 16) * dpi;
+            const int columns = preview ? 10 : std::min(6, static_cast<int>(picture.labels.size()));
             const int rows = (static_cast<int>(picture.labels.size()) + columns - 1) / columns;
-            const float left = std::max(0.0F, (available.x - columns * thumbnail - (columns - 1) * gap) * 0.5F);
-            const float top = ImGui::GetCursorPosY() + std::max(0.0F, (available.y - rows * row_height) * 0.5F);
+            const float thumbnail = std::min({112 * dpi, (available.x - (columns - 1) * gap) / columns, std::max(32 * dpi, (available.y - (rows - 1) * gap) / rows) * image_width / image_height});
+            const float height = thumbnail * image_height / image_width;
+            const float row_height = height + gap;
+            const float left = ImGui::GetCursorPosX() + std::max(0.0F, (available.x - columns * thumbnail - (columns - 1) * gap) * 0.5F);
+            const float top = ImGui::GetCursorPosY() + std::max(0.0F, (available.y - rows * row_height + gap) * 0.5F);
             ImGui::SetCursorPosY(top);
             ImGuiListClipper clipper;
             clipper.Begin(rows, row_height);
@@ -60,16 +62,15 @@ namespace flowdit::editor {
                         ImGui::SetCursorPos({left + column * (thumbnail + gap), y});
                         ImGui::PushID(index);
                         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{});
+                        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0);
                         if (ImGui::ImageButton("image", texture, {thumbnail, height}, {0, index / count}, {1, (index + 1) / count})) {
                             scroll = ImGui::GetScrollY();
                             selected = index;
                             pan = {};
                             fit = true;
                         }
-                        ImGui::PopStyleVar();
-                        const auto& label = image.classes[picture.labels[index]];
-                        ImGui::SetCursorPos({left + column * (thumbnail + gap) + (thumbnail - ImGui::CalcTextSize(label.c_str()).x) * 0.5F, y + height + 3 * dpi});
-                        ImGui::TextDisabled("%s", label.c_str());
+                        ImGui::PopStyleVar(2);
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s / %u × %u", image.classes[picture.labels[index]].c_str(), image.width, image.height);
                         ImGui::PopID();
                     }
                     ImGui::SetCursorPosY(y + row_height - ImGui::GetStyle().ItemSpacing.y);

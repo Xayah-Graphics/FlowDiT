@@ -4,17 +4,23 @@ module flowdit.editor.panels.dataset;
 import flowdit.editor.widgets.controls;
 import std;
 namespace flowdit::editor {
-    void DatasetPanel::open() {
-        const std::filesystem::path path{directory};
-        loading = std::async(std::launch::async, [path, type = kind] { return std::make_shared<const Dataset>(load_dataset(type, path)); });
+    void DatasetPanel::open(Renderer& renderer, const DatasetEntry& entry) {
+        if (picture.texture) renderer.retire(picture.texture);
+        picture = {};
+        canvas = {};
+        dataset.reset();
+        counts.clear();
+        indices.clear();
+        category = -1;
+        page = 0;
+        dirty = false;
+        loading = std::async(std::launch::async, [path = entry.directory, type = *entry.kind] { return std::make_shared<const Dataset>(load_dataset(type, path)); });
         error.clear();
     }
     void DatasetPanel::receive(Renderer& renderer) {
         if (loading.valid() && loading.wait_for(std::chrono::seconds{0}) == std::future_status::ready) {
             try {
                 dataset = loading.get();
-                loaded_directory = directory;
-                loaded_kind = kind;
                 counts.assign(dataset->specification.classes.size(), 0);
                 for (const auto label : dataset->labels) ++counts[label];
                 category = -1;
@@ -49,68 +55,70 @@ namespace flowdit::editor {
         picture.upload(renderer, specification, labels, rgba.data());
         dirty = false;
     }
-    bool DatasetPanel::draw(Renderer& renderer, const bool busy) {
+    bool DatasetPanel::draw_browse() {
         bool show{};
-        ImGui::TextUnformatted(dataset ? dataset->specification.name.c_str() : "No dataset");
-        ImGui::SameLine();
         ImGui::BeginDisabled(!dataset);
-        if (ImGui::SmallButton("View images")) show = true;
-        ImGui::EndDisabled();
-        if (dataset) {
-            const auto& image = dataset->specification;
-            ImGui::TextDisabled("%zu images / %zu classes", dataset->labels.size(), image.classes.size());
-            ImGui::TextDisabled("%u x %u / %s", image.width, image.height, image.channels == 1u ? "Grayscale" : "RGB");
-        }
-        ImGui::BeginDisabled(busy || loading.valid());
-        if (ImGui::Button("Open dataset...")) ImGui::OpenPopup("Open dataset");
-        ImGui::EndDisabled();
-        if (dataset && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", loaded_directory.c_str());
-        ImGui::SetNextWindowSize({440 * renderer.dpi, 0}, ImGuiCond_Appearing);
-        if (ImGui::BeginPopupModal("Open dataset", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
-            ImGui::TextDisabled("Format");
-            int selected_kind = static_cast<int>(kind);
-            ImGui::SetNextItemWidth(-1);
-            if (ImGui::Combo("##format", &selected_kind, "CIFAR-10\0MNIST\0")) kind = static_cast<DatasetKind>(selected_kind);
-            path_field("Dataset folder", directory, renderer.window, true);
-            if (ImGui::Button("Open")) {
-                open();
-                show = true;
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
-        }
-        if (loading.valid()) ImGui::TextDisabled("Loading images...");
-        if (!error.empty()) ImGui::TextWrapped("%s", error.c_str());
-        if (!dataset) return show;
+        ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("Browse class");
+        ImGui::SameLine();
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::BeginCombo("##class", category < 0 ? "All classes" : dataset->specification.classes[category].c_str())) {
+        if (ImGui::BeginCombo("##browse-class", category < 0 ? "All classes" : dataset->specification.classes[category].c_str())) {
             if (ImGui::Selectable("All classes", category < 0)) {
                 category = -1;
-                dirty = true;
+                show = true;
             }
             for (int i = 0; i < static_cast<int>(counts.size()); ++i) {
-                const auto label = std::format("{} ({})", dataset->specification.classes[i], counts[i]);
+                const auto label = std::format("{} · {}", dataset->specification.classes[i], counts[i]);
                 if (ImGui::Selectable(label.c_str(), category == i, counts[i] ? ImGuiSelectableFlags_None : ImGuiSelectableFlags_Disabled)) {
                     category = i;
-                    dirty = true;
+                    show = true;
                 }
             }
             ImGui::EndCombo();
         }
-        if (dirty) {
+        ImGui::EndDisabled();
+        if (show) {
             page = 0;
             canvas = {};
-            show = true;
+            dirty = true;
         }
+        return show;
+    }
+    bool DatasetPanel::draw(const Catalog& catalog, std::string& selected, const bool busy) {
+        bool show{};
+        const auto previous = selected;
+        const float dpi = ImGui::GetStyle().FontScaleDpi;
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2{0, 4 * dpi});
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{6 * dpi, 4 * dpi});
+        ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2{0, 0.5F});
+        for (const auto& [key, entry] : catalog.datasets) {
+            ImGui::PushID(key.c_str());
+            const auto origin = ImGui::GetCursorScreenPos();
+            const float width = ImGui::GetContentRegionAvail().x;
+            const bool available = entry.kind.has_value() && entry.error.empty();
+            ImGui::BeginDisabled(!available || ((busy || loading.valid()) && key != previous));
+            if (ImGui::Selectable(entry.name.c_str(), selected == key, ImGuiSelectableFlags_None, {0, ImGui::GetFrameHeight()})) {
+                selected = key;
+                page = 0;
+                canvas = {};
+                dirty = previous == key;
+                show = true;
+            }
+            const auto detail = !entry.error.empty() ? std::string{"Error"} : entry.kind ? std::format("{}", entry.count) : "Unsupported";
+            const float text_width = ImGui::CalcTextSize(detail.c_str()).x;
+            ImGui::GetWindowDrawList()->AddText({origin.x + width - text_width - 6 * dpi, origin.y + 4 * dpi}, ImGui::GetColorU32(ImGuiCol_TextDisabled), detail.c_str());
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s%s%s", key.c_str(), entry.error.empty() ? "" : "\n", entry.error.c_str());
+            ImGui::EndDisabled();
+            ImGui::PopID();
+        }
+        ImGui::PopStyleVar(3);
+        if (catalog.datasets.empty()) ImGui::TextWrapped("No datasets in %s", Catalog::directory.string().c_str());
         return show;
     }
     void DatasetPanel::draw_images(Renderer& renderer) {
         receive(renderer);
         if (!picture.texture) {
-            ImGui::TextDisabled(loading.valid() ? "Loading dataset..." : "Open a dataset to browse images.");
+            ImGui::TextDisabled(loading.valid() ? "Loading dataset..." : "Select a dataset to browse images.");
             return;
         }
         ImGui::BeginChild("dataset-images", {0, -ImGui::GetFrameHeightWithSpacing()});
@@ -121,22 +129,30 @@ namespace flowdit::editor {
             ImGui::TextDisabled("%s / #%u / %s / %u x %u", picture.specification.name.c_str(), index, picture.specification.classes[picture.labels[canvas.selected]].c_str(), picture.specification.width, picture.specification.height);
             return;
         }
+        const float dpi = ImGui::GetStyle().FontScaleDpi;
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{12 * dpi, (40 * dpi - ImGui::GetFontSize()) * 0.5F});
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("%s / %s", picture.specification.name.c_str(), category < 0 ? "All classes" : picture.specification.classes[category].c_str());
+        const auto pages = std::format("{} / {}", page + 1, (indices.size() + 23) / 24);
+        const float pagination_width = ImGui::CalcTextSize(pages.c_str()).x + ImGui::CalcTextSize("‹›").x + 48 * ImGui::GetStyle().FontScaleDpi + 3 * ImGui::GetStyle().ItemSpacing.x;
+        ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - pagination_width);
         ImGui::BeginDisabled(page == 0);
-        if (ImGui::SmallButton("Previous")) {
+        if (text_button("‹##previous")) {
             --page;
             canvas = {};
             dirty = true;
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
-        ImGui::TextDisabled("%s / %d of %zu", picture.specification.name.c_str(), page + 1, (indices.size() + 23) / 24);
+        ImGui::TextDisabled("%s", pages.c_str());
         ImGui::SameLine();
         ImGui::BeginDisabled(static_cast<std::size_t>(page + 1) * 24 >= indices.size());
-        if (ImGui::SmallButton("Next")) {
+        if (text_button("›##next")) {
             ++page;
             canvas = {};
             dirty = true;
         }
         ImGui::EndDisabled();
+        ImGui::PopStyleVar();
     }
 } // namespace flowdit::editor

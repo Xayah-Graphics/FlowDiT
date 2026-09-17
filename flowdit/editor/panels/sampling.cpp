@@ -6,7 +6,8 @@ import flowdit.editor.widgets.controls;
 import std;
 namespace flowdit::editor {
     void SamplingPanel::accept(Renderer& renderer, const SessionUpdate& update) {
-        if (update.status.mode == Mode::sampling) progress = update.status;
+        if (!attached || update.status.mode != Mode::sampling) return;
+        progress = update.status;
         for (const auto& sample : update.samples) {
             if (sample->info.training_step) continue;
             result = sample->info;
@@ -20,23 +21,54 @@ namespace flowdit::editor {
         picture.labels.resize(100);
         for (std::uint32_t i = 0; i < 100; ++i) picture.labels[i] = info.request.class_index.value_or(i % static_cast<std::uint32_t>(info.model.image.classes.size()));
     }
-    void SamplingPanel::open_checkpoint() {
-        try {
-            model = read_model_configuration(checkpoint);
-            loaded_checkpoint = checkpoint;
-            category = -1;
-            error.clear();
-        } catch (const std::exception& failure) {
-            loaded_checkpoint.clear();
-            error = failure.what();
-        }
+    void SamplingPanel::select(const DatasetEntry& dataset, std::string name, const std::size_t index) {
+        run = std::move(name);
+        checkpoint = {};
+        category = -1;
+        error.clear();
+        if (dataset.runs.empty()) return;
+        if (run.empty()) run = dataset.runs.begin()->first;
+        const auto& entry = dataset.runs.at(run);
+        error = entry.error;
+        if (entry.checkpoints.empty()) return;
+        checkpoint = entry.checkpoints.at(index);
+        if (!checkpoint.error.empty()) error = checkpoint.error;
     }
-    bool SamplingPanel::draw(Renderer& renderer, Session& session, SessionStatus& status) {
+    bool SamplingPanel::draw(Renderer& renderer, Session& session, SessionStatus& status, const Catalog& catalog, const DatasetEntry& dataset) {
         bool show{};
         ImGui::BeginDisabled(status.busy);
-        if (path_field("Checkpoint", checkpoint, renderer.window, false)) open_checkpoint();
-        if (!loaded_checkpoint.empty() && loaded_checkpoint == checkpoint) ImGui::TextDisabled("%s / %u x %u", model.image.name.c_str(), model.image.width, model.image.height);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("Checkpoint");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-1);
+        const auto label = checkpoint.path.empty() ? std::string{"No checkpoint"} : run_label(run);
+        if (ImGui::BeginCombo("##checkpoint", label.c_str())) {
+            for (const auto& [name, entry] : dataset.runs) {
+                ImGui::PushID(name.c_str());
+                ImGui::TextDisabled("%s", run_label(name).c_str());
+                if (!entry.error.empty()) ImGui::TextWrapped("%s", entry.error.c_str());
+                if (entry.checkpoints.empty()) ImGui::TextDisabled("No checkpoints");
+                for (std::size_t i = 0; i < entry.checkpoints.size(); ++i) {
+                    const auto& item = entry.checkpoints[i];
+                    const auto title = std::format("{} · Step {}", item.path.filename().string(), item.step) + (item.error.empty() ? "" : " / Error");
+                    if (ImGui::Selectable(title.c_str(), item.path == checkpoint.path)) select(dataset, name, i);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s%s%s", name.c_str(), item.error.empty() ? "" : "\n", item.error.c_str());
+                }
+                ImGui::PopID();
+                ImGui::Spacing();
+            }
+            ImGui::EndCombo();
+        }
+        if (!checkpoint.path.empty()) {
+            ImGui::TextDisabled("Step %llu · EMA", checkpoint.step);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", checkpoint.path.string().c_str());
+        }
+        ImGui::Spacing();
+        ImGui::BeginDisabled(checkpoint.path.empty() || !error.empty());
+        const auto& model = checkpoint.model;
+        ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("Class");
+        ImGui::SameLine();
         ImGui::SetNextItemWidth(-1);
         if (ImGui::BeginCombo("##class", category < 0 ? "All classes" : model.image.classes[category].c_str())) {
             if (ImGui::Selectable("All classes", category < 0)) category = -1;
@@ -44,18 +76,16 @@ namespace flowdit::editor {
                 if (ImGui::Selectable(model.image.classes[i].c_str(), category == i)) category = i;
             ImGui::EndCombo();
         }
-        ImGui::TextDisabled("ODE steps");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputScalar("##steps", ImGuiDataType_U32, &request.step_count);
-        ImGui::TextDisabled("CFG");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputFloat("##cfg", &request.guidance, 0, 0, "%.2f");
-        ImGui::TextDisabled("Seed");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputScalar("##seed", ImGuiDataType_U64, &request.seed);
-        path_field("Output folder", directory, renderer.window, true);
-        ImGui::TextDisabled("EMA / Heun / 100 images");
+        if (ImGui::BeginTable("sampling-parameters", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings)) {
+            ImGui::TableNextColumn();
+            number_field("Steps", ImGuiDataType_U32, &request.step_count);
+            ImGui::TableNextColumn();
+            number_field("CFG", ImGuiDataType_Float, &request.guidance, "%.2g");
+            ImGui::EndTable();
+        }
         ImGui::EndDisabled();
+        ImGui::EndDisabled();
+        ImGui::Spacing();
         if (status.busy && status.mode == Mode::sampling) {
             ImGui::BeginDisabled(stopping);
             if (ImGui::Button(stopping ? "Stopping..." : "Stop", {-1, 0})) {
@@ -64,17 +94,17 @@ namespace flowdit::editor {
             }
             ImGui::EndDisabled();
         } else {
-            ImGui::BeginDisabled(status.busy || loaded_checkpoint.empty() || loaded_checkpoint != checkpoint);
+            ImGui::BeginDisabled(status.busy || checkpoint.path.empty() || !error.empty());
             if (ImGui::Button("Generate", {-1, 0})) {
                 if (picture.texture) renderer.retire(picture.texture);
                 picture = {};
                 canvas = {};
                 stopping = false;
+                attached = true;
                 request.class_index = category < 0 ? std::nullopt : std::optional<std::uint32_t>{static_cast<std::uint32_t>(category)};
-                const auto stamp = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-                const auto path = std::filesystem::path{directory} / std::format("sample-{}.png", stamp);
-                result = {.path = path, .checkpoint = checkpoint, .request = request, .model = model};
-                session.start(SampleRequest{.checkpoint = checkpoint, .output = path, .device = device, .sampling = request});
+                const auto path = catalog.inference(dataset.runs.at(run));
+                result = {.path = path, .checkpoint = checkpoint.path, .request = request, .model = model};
+                session.start(SampleRequest{.checkpoint = checkpoint.path, .output = path, .device = device, .sampling = request});
                 status = {.mode = Mode::sampling, .stage = Stage::loading, .busy = true, .started = std::chrono::steady_clock::now()};
                 progress = status;
                 error.clear();
@@ -82,20 +112,21 @@ namespace flowdit::editor {
             }
             ImGui::EndDisabled();
         }
-        if (status.busy && status.mode == Mode::training) ImGui::TextDisabled("Training is running.");
-        if (!error.empty()) ImGui::TextWrapped("%s", error.c_str());
-        if (progress.mode == Mode::sampling) {
-            ImGui::Spacing();
-            ImGui::TextDisabled("%s", stage_names[static_cast<std::size_t>(progress.stage)].data());
-            if (progress.busy && progress.sampling.step_count) {
-                ImGui::TextDisabled("%u / %u steps", progress.sampling.step, progress.sampling.step_count);
-                ImGui::ProgressBar(static_cast<float>(progress.sampling.step) / progress.sampling.step_count, {-1, 3 * renderer.dpi}, "");
-            }
-            if (!progress.error.empty()) ImGui::TextWrapped("%s", progress.error.c_str());
+        if (picture.texture) {
+            ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize("Result").x - 24 * renderer.dpi);
+            if (text_button("Result")) show = true;
         }
-        ImGui::BeginDisabled(!picture.texture);
-        if (ImGui::Button("View results")) show = true;
-        ImGui::EndDisabled();
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4{});
+        if (ImGui::CollapsingHeader("Parameters")) {
+            ImGui::BeginDisabled(status.busy || checkpoint.path.empty() || !error.empty());
+            number_field("Seed", ImGuiDataType_U64, &request.seed, nullptr, true);
+            ImGui::EndDisabled();
+        }
+        ImGui::PopStyleColor();
+        if (status.busy && status.mode == Mode::training) ImGui::TextDisabled("Available after training");
+        else if (checkpoint.path.empty()) ImGui::TextDisabled("No checkpoint yet");
+        if (!error.empty()) ImGui::TextWrapped("%s", error.c_str());
         return show;
     }
     void SamplingPanel::draw_images() {
@@ -103,13 +134,11 @@ namespace flowdit::editor {
             ImGui::TextDisabled(progress.busy ? "Generating images..." : "Generate images to view results.");
             return;
         }
-        ImGui::BeginChild("sampling-images", {0, -2 * ImGui::GetTextLineHeightWithSpacing()});
+        ImGui::BeginChild("sampling-images", {0, -ImGui::GetFrameHeightWithSpacing()});
         canvas.draw(picture);
         ImGui::EndChild();
         const auto& sampling = result.request;
-        ImGui::PushTextWrapPos(0);
-        ImGui::TextDisabled("%s / %s / %u steps / CFG %.2f / seed %llu", progress.stage == Stage::complete ? "Inference" : "Inference preview", sampling.class_index ? result.model.image.classes[*sampling.class_index].c_str() : "All classes", sampling.step_count, sampling.guidance, sampling.seed);
-        ImGui::PopTextWrapPos();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s", result.checkpoint.string().c_str(), result.path.string().c_str());
+        ImGui::TextDisabled("%s / %s", progress.stage == Stage::complete ? "Inference" : "Inference preview", sampling.class_index ? result.model.image.classes[*sampling.class_index].c_str() : "All classes");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%u steps / CFG %.2f / seed %llu\n%s\n%s", sampling.step_count, sampling.guidance, sampling.seed, result.checkpoint.string().c_str(), result.path.string().c_str());
     }
 } // namespace flowdit::editor

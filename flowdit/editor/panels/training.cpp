@@ -1,13 +1,56 @@
 module;
 #include <flowdit/cuda.h>
 #include <imgui.h>
-#include <implot.h>
 module flowdit.editor.panels.training;
 import flowdit.editor.widgets.controls;
 import std;
 namespace flowdit::editor {
+    void TrainingPanel::select(Renderer& renderer, const Catalog& catalog, const DatasetEntry& dataset, std::string name) {
+        if (picture.texture) renderer.retire(picture.texture);
+        picture = {};
+        preview = {};
+        canvas = {};
+        progress = {};
+        metrics.clear();
+        error.clear();
+        stopping = false;
+        attached = false;
+        elapsed_base = 0;
+        run = std::move(name);
+        configuration = catalog.training(dataset);
+        if (run.empty()) return;
+        try {
+            const auto& entry = dataset.runs.at(run);
+            if (!entry.error.empty()) throw std::runtime_error{entry.error};
+            configuration = entry.configuration;
+            const auto history = output::read_history(configuration.output);
+            metrics = history.metrics;
+            progress.mode = Mode::training;
+            progress.stage = Stage::stopped;
+            if (!entry.checkpoints.empty()) {
+                const auto& checkpoint = entry.checkpoints.front();
+                if (!checkpoint.error.empty()) throw std::runtime_error{checkpoint.error};
+                configuration.seed = checkpoint.seed;
+                progress.training.step = checkpoint.step;
+                progress.training.seed = checkpoint.seed;
+                elapsed_base = checkpoint.training_seconds;
+                if (checkpoint.step >= configuration.end_step) progress.stage = Stage::complete;
+            }
+            for (const auto& sample : history.samples) {
+                if (sample.source != ParameterSource::exponential_average) continue;
+                if (sample.training_step >= preview.training_step) preview = sample;
+            }
+            if (!preview.path.empty()) {
+                const auto loaded = output::read_sample(preview.path);
+                picture.upload(renderer, loaded.images.model.image, loaded.images.labels, loaded.images.rgba.data());
+            }
+        } catch (const std::exception& failure) {
+            error = failure.what();
+        }
+    }
     void TrainingPanel::accept(Renderer& renderer, const SessionUpdate& update) {
-        if (update.status.mode == Mode::training) progress = update.status;
+        if (!attached || update.status.mode != Mode::training) return;
+        progress = update.status;
         metrics.insert(metrics.end(), update.metrics.begin(), update.metrics.end());
         for (const auto& sample : update.samples) {
             if (!sample->info.training_step || sample->info.source != ParameterSource::exponential_average) continue;
@@ -15,30 +58,33 @@ namespace flowdit::editor {
             picture.upload(renderer, sample->images.model.image, sample->images.labels, sample->images.rgba.data());
         }
     }
-    bool TrainingPanel::draw(Renderer& renderer, Session& session, SessionStatus& status, const std::shared_ptr<const Dataset>& dataset, const std::string& dataset_path, const DatasetKind dataset_type, const bool loading) {
+    bool TrainingPanel::draw(Renderer& renderer, Session& session, SessionStatus& status, const Catalog& catalog, const DatasetEntry& entry, const std::shared_ptr<const Dataset>& dataset) {
         bool show{};
-        ImGui::TextUnformatted("Training");
-        ImGui::SameLine();
-        if (ImGui::SmallButton("View preview")) show = true;
+        const bool running = status.busy && status.mode == Mode::training;
         ImGui::BeginDisabled(status.busy);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("Run");
+        ImGui::SameLine();
         ImGui::SetNextItemWidth(-1);
-        ImGui::Combo("##start-from", &resume, "New training\0Resume checkpoint\0");
-        if (resume) path_field("Checkpoint", checkpoint, renderer.window, false);
-        ImGui::TextDisabled("Target step");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputScalar("##target", ImGuiDataType_U64, &configuration.end_step);
-        ImGui::TextDisabled("Learning rate");
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputFloat("##learning-rate", &configuration.optimizer.learning_rate, 0, 0, "%.6f");
-        if (resume) ImGui::TextDisabled("Seed restored from checkpoint.");
-        else {
-            ImGui::TextDisabled("Seed");
-            ImGui::SetNextItemWidth(-1);
-            ImGui::InputScalar("##seed", ImGuiDataType_U64, &configuration.seed);
+        if (ImGui::BeginCombo("##run", run.empty() ? "New training" : run_label(run).c_str())) {
+            if (ImGui::Selectable("New training", run.empty())) select(renderer, catalog, entry);
+            for (const auto& [name, history] : entry.runs) {
+                const auto label = run_label(name) + (history.error.empty() ? "" : " / Error") + "##" + name;
+                if (ImGui::Selectable(label.c_str(), name == run)) select(renderer, catalog, entry, name);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", name.c_str());
+            }
+            ImGui::EndCombo();
         }
-        path_field("Output folder", directory, renderer.window, true);
         ImGui::EndDisabled();
-        if (status.busy && status.mode == Mode::training) {
+        ImGui::Spacing();
+        const auto state = running && stopping ? std::string_view{"Stopping and saving"} : stage_names[static_cast<std::size_t>(progress.stage)];
+        if (run.empty()) ImGui::TextDisabled("Ready to train");
+        else ImGui::TextDisabled("%.*s / step %llu", static_cast<int>(state.size()), state.data(), progress.training.step);
+        ImGui::BeginDisabled(status.busy);
+        number_field("Target steps", ImGuiDataType_U64, &configuration.end_step);
+        ImGui::EndDisabled();
+        ImGui::Spacing();
+        if (running) {
             ImGui::BeginDisabled(stopping);
             if (ImGui::Button(stopping ? "Stopping..." : "Stop and save", {-1, 0})) {
                 session.stop();
@@ -46,60 +92,60 @@ namespace flowdit::editor {
             }
             ImGui::EndDisabled();
         } else {
-            ImGui::BeginDisabled(status.busy || !dataset || loading || (resume && checkpoint.empty()));
-            if (ImGui::Button("Start training", {-1, 0})) {
-                configuration.dataset = dataset_path;
-                configuration.dataset_type = dataset_type;
-                configuration.output = directory;
+            const bool resumable = !run.empty() && entry.runs.contains(run) && !entry.runs.at(run).checkpoints.empty();
+            ImGui::BeginDisabled(status.busy || !dataset || !error.empty() || (!run.empty() && !resumable) || (!run.empty() && configuration.end_step <= progress.training.step));
+            if (ImGui::Button(run.empty() ? "Start training" : "Continue training", {-1, 0})) {
+                std::filesystem::path checkpoint;
+                if (run.empty()) {
+                    configuration.output = catalog.training(entry).output;
+                    run = configuration.output.filename().string();
+                } else {
+                    const auto& latest = entry.runs.at(run).checkpoints.front();
+                    checkpoint = latest.path;
+                    elapsed_base = latest.training_seconds;
+                }
                 configuration.device = device;
-                if (picture.texture) renderer.retire(picture.texture);
-                picture = {};
-                preview = {};
-                canvas = {};
-                metrics.clear();
                 stopping = false;
-                target = configuration.end_step;
-                session.start(TrainRequest{configuration, dataset, resume ? checkpoint : std::string{}});
+                attached = true;
+                session.start(TrainRequest{configuration, dataset, checkpoint});
                 status = {.mode = Mode::training, .stage = Stage::loading, .busy = true, .started = std::chrono::steady_clock::now()};
                 progress = status;
                 show = true;
             }
             ImGui::EndDisabled();
         }
-        if (status.busy && status.mode != Mode::training) ImGui::TextDisabled("Inference is running.");
-        if (!dataset) ImGui::TextDisabled("Open a dataset first.");
-        if (progress.mode != Mode::training) return show;
+        if (!metrics.empty()) {
+            ImGui::Spacing();
+            ImGui::TextDisabled("Training loss / %.4f", metrics.back().loss);
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4{});
+            ImGui::PlotLines("##loss", [](void* data, const int index) { return static_cast<float>(static_cast<const TrainingRecord*>(data)[index].loss); }, metrics.data(), static_cast<int>(metrics.size()), 0, nullptr, std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), {-1, 60 * renderer.dpi});
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) {
+                const float padding = ImGui::GetStyle().FramePadding.x;
+                const float position = (ImGui::GetIO().MousePos.x - ImGui::GetItemRectMin().x - padding) / (ImGui::GetItemRectSize().x - padding * 2);
+                const auto index = static_cast<std::size_t>(std::clamp(position, 0.0F, 1.0F) * (metrics.size() - 1));
+                ImGui::SetTooltip("Step %llu\nLoss %.6f", metrics[index].step, metrics[index].loss);
+            }
+        }
+        if (picture.texture) {
+            ImGui::SetCursorPosX(ImGui::GetWindowContentRegionMax().x - ImGui::CalcTextSize("Preview").x - 24 * renderer.dpi);
+            if (text_button("Preview")) show = true;
+        }
         ImGui::Spacing();
-        ImGui::TextDisabled("%s", stopping && progress.busy ? "Stopping and saving" : stage_names[static_cast<std::size_t>(progress.stage)].data());
-        ImGui::Text("%llu / %llu steps", progress.training.step, target);
-        ImGui::ProgressBar(static_cast<float>(progress.training.step) / static_cast<float>(target), {-1, 3 * renderer.dpi}, "");
-        if (!metrics.empty()) ImGui::Text("Loss %.4f", metrics.back().loss);
-        const auto seconds = std::chrono::duration_cast<std::chrono::seconds>((progress.busy ? std::chrono::steady_clock::now() : progress.ended) - progress.started).count();
-        ImGui::TextDisabled("Elapsed %lld:%02lld", seconds / 60, seconds % 60);
-        if (!progress.error.empty()) ImGui::TextWrapped("%s", progress.error.c_str());
-        if (metrics.empty()) return show;
-        std::vector<double> steps, losses;
-        for (const auto& metric : metrics) {
-            steps.push_back(static_cast<double>(metric.step));
-            losses.push_back(metric.loss);
+        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4{});
+        if (ImGui::CollapsingHeader("Parameters")) {
+            ImGui::BeginDisabled(status.busy);
+            number_field("Learning rate", ImGuiDataType_Float, &configuration.optimizer.learning_rate, "%.4g", true);
+            ImGui::BeginDisabled(!run.empty());
+            number_field("Seed", ImGuiDataType_U64, &configuration.seed, nullptr, true);
+            if (!run.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Restored from checkpoint");
+            ImGui::EndDisabled();
+            ImGui::EndDisabled();
         }
-        if (ImPlot::BeginPlot("##loss", {-1, 145 * renderer.dpi}, ImPlotFlags_NoTitle | ImPlotFlags_NoLegend | ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect | ImPlotFlags_NoMouseText | ImPlotFlags_NoFrame | ImPlotFlags_NoInputs)) {
-            const auto axes = ImPlotAxisFlags_NoHighlight | (metrics.size() > 1 ? ImPlotAxisFlags_AutoFit : ImPlotAxisFlags_None);
-            ImPlot::SetupAxes(nullptr, nullptr, axes, axes);
-            if (metrics.size() == 1) {
-                ImPlot::SetupAxisLimits(ImAxis_X1, std::max(0.0, steps.front() - 100), steps.front() + 100, ImGuiCond_Always);
-                ImPlot::SetupAxisLimits(ImAxis_Y1, 0, std::max(0.01, losses.front() * 1.2), ImGuiCond_Always);
-            }
-            ImPlot::SetupAxisFormat(ImAxis_X1, "%.0f");
-            ImPlot::SetupAxisFormat(ImAxis_Y1, "%.2f");
-            ImPlot::PlotLine("Loss", steps.data(), losses.data(), static_cast<int>(steps.size()), {ImPlotProp_LineColor, ImVec4{0.55F, 0.70F, 0.63F, 1}, ImPlotProp_LineWeight, 1.5F * renderer.dpi, ImPlotProp_Marker, metrics.size() == 1 ? ImPlotMarker_Circle : ImPlotMarker_None});
-            if (ImPlot::IsPlotHovered() && !metrics.empty()) {
-                const auto point = ImPlot::GetPlotMousePos();
-                const auto closest = std::ranges::min_element(metrics, {}, [&point](const TrainingRecord& row) { return std::abs(static_cast<double>(row.step) - point.x); });
-                ImGui::SetTooltip("Step %llu\nLoss %.6f", closest->step, closest->loss);
-            }
-            ImPlot::EndPlot();
-        }
+        ImGui::PopStyleColor();
+        if (status.busy && status.mode != Mode::training) ImGui::TextDisabled("Available after inference");
+        if (!dataset) ImGui::TextDisabled("Loading dataset...");
+        if (!error.empty()) ImGui::TextWrapped("%s", error.c_str());
         return show;
     }
     void TrainingPanel::draw_images() {
@@ -110,6 +156,6 @@ namespace flowdit::editor {
         ImGui::BeginChild("training-images", {0, -ImGui::GetFrameHeightWithSpacing()});
         canvas.draw(picture);
         ImGui::EndChild();
-        ImGui::TextDisabled("Training preview / EMA / step %llu", preview.training_step);
+        ImGui::TextDisabled("EMA preview / Step %llu", preview.training_step);
     }
 } // namespace flowdit::editor

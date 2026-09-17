@@ -120,8 +120,7 @@ namespace flowdit {
         sampler_checkpoint.clear();
         auto config = request.configuration;
         if (const auto result = cudaSetDevice(config.device); result != cudaSuccess) throw std::runtime_error{cudaGetErrorString(result)};
-        std::filesystem::create_directories(config.output / "checkpoints");
-        std::filesystem::create_directories(config.output / "samples");
+        std::filesystem::create_directories(config.output);
         report(Stage::loading, "Initializing CUDA training runtime.");
         if (!request.checkpoint.empty()) config.patch_size = read_model_configuration(request.checkpoint).patch_size;
         const ModelConfiguration model{request.dataset->specification, config.patch_size};
@@ -141,6 +140,7 @@ namespace flowdit {
         const auto checkpoint = [&](const bool final) {
             report(Stage::saving);
             const auto path = final ? config.output / "final.safetensors" : config.output / "checkpoints" / std::format("step-{:06}.safetensors", trainer.state.step);
+            std::filesystem::create_directories(path.parent_path());
             trainer.save(path);
             {
                 const std::lock_guard lock{mutex};
@@ -189,6 +189,7 @@ namespace flowdit {
                     const auto observer = observe({.training_step = trainer.state.step, .source = source, .request = config.preview, .model = model});
                     auto images         = trainer.sample(config.preview, source, observer);
                     if (!images) break;
+                    std::filesystem::create_directories(config.output / "samples");
                     auto sample = std::make_shared<SampleOutput>(SampleOutput{.info = {.path = config.output / "samples" / std::format("step-{:06}-{}.png", trainer.state.step, source == ParameterSource::parameters ? "parameters" : "ema"), .request = config.preview, .source = source, .training_step = trainer.state.step, .nfe = images->nfe, .model = images->model, .labels = images->labels}, .images = std::move(*images)});
                     output::write_sample(*sample);
                     {

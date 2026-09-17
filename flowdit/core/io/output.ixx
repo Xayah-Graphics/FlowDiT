@@ -34,7 +34,6 @@ export namespace flowdit {
     struct RunHistory final {
         std::vector<TrainingRecord> metrics;
         std::vector<SampleInfo> samples;
-        std::vector<std::filesystem::path> checkpoints;
     };
 } // namespace flowdit
 export namespace flowdit::output {
@@ -44,6 +43,5 @@ export namespace flowdit::output {
     void write_sample(const SampleOutput& sample);
     SampleOutput read_sample(const std::filesystem::path& path);
     RunHistory read_history(const std::filesystem::path& directory);
-    std::filesystem::path latest_checkpoint(const std::filesystem::path& directory);
     std::string_view solver_name(SamplingSolver solver);
 } // namespace flowdit::output

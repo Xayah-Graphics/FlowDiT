@@ -33,6 +33,7 @@ namespace flowdit::serialization::safetensors {
         text.append((8uz - text.size() % 8uz) % 8uz, ' ');
         const std::uint64_t header_size = text.size();
         std::ofstream output{path, std::ios::binary | std::ios::trunc};
+        output.exceptions(std::ios::badbit | std::ios::failbit);
         output.write(reinterpret_cast<const char*>(&header_size), sizeof(header_size));
         output.write(text.data(), static_cast<std::streamsize>(text.size()));
         for (const TensorView& tensor : tensors) output.write(static_cast<const char*>(tensor.data), static_cast<std::streamsize>(tensor.byte_count));
@@ -42,16 +43,20 @@ namespace flowdit::serialization::safetensors {
         input.exceptions(std::ios::failbit | std::ios::badbit);
         return read_header(input).at("__metadata__").get<std::map<std::string, std::string>>();
     }
-    File read(const std::filesystem::path& path) {
+    File read(const std::filesystem::path& path, const std::span<const std::string_view> names) {
         std::ifstream input{path, std::ios::binary};
         input.exceptions(std::ios::failbit | std::ios::badbit);
         const auto header               = read_header(input);
         const std::uint64_t data_offset = static_cast<std::uint64_t>(input.tellg());
         File result;
         result.metadata = header.at("__metadata__").get<std::map<std::string, std::string>>();
-        result.tensors.reserve(header.size() - 1uz);
-        for (const auto& [name, description] : header.items()) {
-            if (name == "__metadata__") continue;
+        std::vector<std::string> selected{names.begin(), names.end()};
+        if (selected.empty())
+            for (const auto& [name, description] : header.items())
+                if (name != "__metadata__") selected.push_back(name);
+        result.tensors.reserve(selected.size());
+        for (const auto& name : selected) {
+            const auto& description = header.at(name);
             const std::uint64_t begin = description.at("data_offsets").at(0).get<std::uint64_t>();
             const std::uint64_t end   = description.at("data_offsets").at(1).get<std::uint64_t>();
             Tensor tensor{

@@ -1,5 +1,6 @@
 export module flowdit.editor.panels.training;
 export import flowdit.runtime.session;
+import flowdit.runtime.catalog;
 import flowdit.editor.graphics.renderer;
 import flowdit.editor.viewing.canvas;
 import std;
@@ -7,16 +8,17 @@ export namespace flowdit::editor {
     struct TrainingPanel final {
         RunConfiguration configuration;
         SessionStatus progress;
-        int device{}, resume{};
-        std::string directory, checkpoint;
+        int device{};
+        std::string run, error;
         std::vector<TrainingRecord> metrics;
         Picture picture;
         SampleInfo preview;
         Canvas canvas;
-        std::uint64_t target{};
-        bool stopping{};
+        double elapsed_base{};
+        bool stopping{}, attached{};
+        void select(Renderer& renderer, const Catalog& catalog, const DatasetEntry& dataset, std::string name = {});
         void accept(Renderer& renderer, const SessionUpdate& update);
-        bool draw(Renderer& renderer, Session& session, SessionStatus& status, const std::shared_ptr<const Dataset>& dataset, const std::string& dataset_path, DatasetKind dataset_type, bool loading);
+        bool draw(Renderer& renderer, Session& session, SessionStatus& status, const Catalog& catalog, const DatasetEntry& entry, const std::shared_ptr<const Dataset>& dataset);
         void draw_images();
     };
 } // namespace flowdit::editor

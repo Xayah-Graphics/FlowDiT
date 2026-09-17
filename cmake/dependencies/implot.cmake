@@ -1,8 +1,0 @@
-include_guard(GLOBAL)
-flowdit_require_dependency(imgui)
-FetchContent_MakeAvailable(implot)
-add_library(flowdit_implot STATIC "${implot_SOURCE_DIR}/implot.cpp" "${implot_SOURCE_DIR}/implot_items.cpp")
-add_library(flowdit::implot ALIAS flowdit_implot)
-set_target_properties(flowdit_implot PROPERTIES CXX_SCAN_FOR_MODULES OFF CXX_MODULE_STD OFF)
-target_include_directories(flowdit_implot SYSTEM PUBLIC "${implot_SOURCE_DIR}")
-target_link_libraries(flowdit_implot PUBLIC flowdit::imgui)

@@ -73,6 +73,7 @@ target_sources(flowdit_core PRIVATE
         flowdit/core/neural/transformer.cpp
         flowdit/core/neural/transformer.cu
         flowdit/core/runtime/session.cpp
+        flowdit/core/runtime/catalog.cpp
         flowdit/core/sampling/runtime.cpp
         flowdit/core/sampling/sampler.cpp
         flowdit/core/serialization/safetensors.cpp
@@ -90,13 +91,15 @@ target_sources(flowdit_core PRIVATE
         flowdit/core/neural/training-state.ixx
         flowdit/core/neural/transformer.ixx
         flowdit/core/runtime/session.ixx
+        flowdit/core/runtime/catalog.ixx
         flowdit/core/sampling/types.ixx
         flowdit/core/sampling/runtime.ixx
         flowdit/core/sampling/sampler.ixx
         flowdit/core/serialization/safetensors.ixx
         flowdit/core/training/trainer.ixx)
 target_include_directories(flowdit_core PUBLIC "${FLOWDIT_CLION_CUDA_INCLUDE_DIRECTORY}")
-target_compile_definitions(flowdit_core PRIVATE FLOWDIT_PROJECT_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(flowdit_core PRIVATE FLOWDIT_PROJECT_VERSION="${PROJECT_VERSION}"
+        FLOWDIT_DATA_DIRECTORY="${PROJECT_SOURCE_DIR}/data")
 target_link_libraries(flowdit_core PUBLIC CCCL::libcudacxx CUDA::toolkit Threads::Threads
         PRIVATE CUDA::cublas CUDA::cublasLt CUDA::curand nlohmann_json::nlohmann_json flowdit::stb)
 
@@ -107,7 +110,6 @@ if (FLOWDIT_BUILD_EDITOR)
     flowdit_require_dependency(vulkan)
     flowdit_require_dependency(slang)
     flowdit_require_dependency(imgui)
-    flowdit_require_dependency(implot)
     include(cmake/Shaders.cmake)
     add_library(flowdit_editor STATIC)
     target_sources(flowdit_editor PRIVATE
@@ -135,9 +137,8 @@ if (FLOWDIT_BUILD_EDITOR)
             flowdit/editor/panels/training.ixx
             flowdit/editor/panels/sampling.ixx)
     target_compile_definitions(flowdit_editor PRIVATE GLFW_INCLUDE_NONE GLFW_EXPOSE_NATIVE_WIN32
-            FLOWDIT_SHADER_DIRECTORY="${FLOWDIT_SHADER_OUTPUT_DIRECTORY}"
-            FLOWDIT_SOURCE_DIRECTORY="${PROJECT_SOURCE_DIR}")
-    target_link_libraries(flowdit_editor PRIVATE flowdit_core flowdit::vulkan flowdit::imgui flowdit::implot CUDA::cudart ole32 uuid dwmapi)
+            FLOWDIT_SHADER_DIRECTORY="${FLOWDIT_SHADER_OUTPUT_DIRECTORY}")
+    target_link_libraries(flowdit_editor PRIVATE flowdit_core flowdit::vulkan flowdit::imgui CUDA::cudart dwmapi)
     add_dependencies(flowdit_editor flowdit_shaders)
 endif ()
 

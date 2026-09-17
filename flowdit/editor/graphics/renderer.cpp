@@ -38,7 +38,7 @@ namespace flowdit::editor {
         io.BackendRendererName = "flowdit_shader_object";
         io.BackendFlags |= ImGuiBackendFlags_RendererHasVtxOffset | ImGuiBackendFlags_RendererHasTextures;
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-        io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/segoeui.ttf");
+        io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/SegUIVar.ttf");
         ImFontConfig chinese;
         chinese.MergeMode = true;
         io.Fonts->AddFontFromFileTTF("C:/Windows/Fonts/msyh.ttc", 0, &chinese);

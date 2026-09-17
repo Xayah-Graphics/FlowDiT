@@ -2,15 +2,12 @@ module;
 #include <Windows.h>
 #include <windowsx.h>
 #include <dwmapi.h>
-#include <shobjidl.h>
-#include <wrl/client.h>
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 module flowdit.editor.platform.window;
 import std;
 namespace flowdit::editor {
     WindowPlatform::WindowPlatform() {
-        if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))) throw std::runtime_error{"Cannot initialize file dialogs"};
         if (!glfwInit()) throw std::runtime_error{"Cannot initialize GLFW"};
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
@@ -37,24 +34,27 @@ namespace flowdit::editor {
         RemovePropW(native_window, L"FlowDiTWindow");
         glfwDestroyWindow(window);
         glfwTerminate();
-        CoUninitialize();
     }
-    std::optional<std::string> WindowPlatform::choose_path(const bool directory) {
-        Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
-        if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) throw std::runtime_error{"Cannot create file dialog"};
-        dialog->SetOptions(FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR | (directory ? FOS_PICKFOLDERS : FOS_FILEMUSTEXIST));
-        const COMDLG_FILTERSPEC filter{L"Checkpoint", L"*.safetensors"};
-        if (!directory) dialog->SetFileTypes(1, &filter);
-        const auto result = dialog->Show(native_window);
-        if (result == HRESULT_FROM_WIN32(ERROR_CANCELLED)) return {};
-        if (FAILED(result)) throw std::runtime_error{"Cannot open file dialog"};
-        Microsoft::WRL::ComPtr<IShellItem> item;
-        if (FAILED(dialog->GetResult(&item))) throw std::runtime_error{"Cannot read selected path"};
-        PWSTR path{};
-        if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) throw std::runtime_error{"Cannot read selected path"};
-        const std::filesystem::path selected{path};
-        CoTaskMemFree(path);
-        return selected.string();
+    void WindowPlatform::toggle_fullscreen() {
+        if (!fullscreen) {
+            GetWindowPlacement(native_window, &windowed_placement);
+            windowed_style = GetWindowLongPtrW(native_window, GWL_STYLE);
+            MONITORINFO monitor{sizeof(MONITORINFO)};
+            GetMonitorInfoW(MonitorFromWindow(native_window, MONITOR_DEFAULTTONEAREST), &monitor);
+            fullscreen = true;
+            SetWindowLongPtrW(native_window, GWL_STYLE, windowed_style & ~static_cast<LONG_PTR>(WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MAXIMIZE));
+            constexpr DWM_WINDOW_CORNER_PREFERENCE corners = DWMWCP_DONOTROUND;
+            DwmSetWindowAttribute(native_window, DWMWA_WINDOW_CORNER_PREFERENCE, &corners, sizeof(corners));
+            const auto& area = monitor.rcMonitor;
+            SetWindowPos(native_window, HWND_TOP, area.left, area.top, area.right - area.left, area.bottom - area.top, SWP_FRAMECHANGED | SWP_NOOWNERZORDER);
+        } else {
+            fullscreen = false;
+            SetWindowLongPtrW(native_window, GWL_STYLE, windowed_style);
+            SetWindowPlacement(native_window, &windowed_placement);
+            constexpr DWM_WINDOW_CORNER_PREFERENCE corners = DWMWCP_DEFAULT;
+            DwmSetWindowAttribute(native_window, DWMWA_WINDOW_CORNER_PREFERENCE, &corners, sizeof(corners));
+            SetWindowPos(native_window, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
     }
     LRESULT CALLBACK WindowPlatform::window_proc(HWND window, const UINT message, const WPARAM wparam, const LPARAM lparam) {
         auto& platform = *static_cast<WindowPlatform*>(GetPropW(window, L"FlowDiTWindow"));
@@ -63,6 +63,7 @@ namespace flowdit::editor {
             if (wparam) return 0;
             break;
         case WM_NCHITTEST: {
+            if (platform.fullscreen) return HTCLIENT;
             POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
             ScreenToClient(window, &point);
             RECT client{};
@@ -89,12 +90,16 @@ namespace flowdit::editor {
             MONITORINFO monitor{sizeof(MONITORINFO)};
             GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor);
             auto& limits = *reinterpret_cast<MINMAXINFO*>(lparam);
-            limits.ptMaxPosition = {monitor.rcWork.left - monitor.rcMonitor.left, monitor.rcWork.top - monitor.rcMonitor.top};
-            limits.ptMaxSize = {monitor.rcWork.right - monitor.rcWork.left, monitor.rcWork.bottom - monitor.rcWork.top};
+            const auto& area = platform.fullscreen ? monitor.rcMonitor : monitor.rcWork;
+            limits.ptMaxPosition = {area.left - monitor.rcMonitor.left, area.top - monitor.rcMonitor.top};
+            limits.ptMaxSize = {area.right - area.left, area.bottom - area.top};
             const auto dpi = GetDpiForWindow(window);
             limits.ptMinTrackSize = {MulDiv(960, dpi, 96), MulDiv(640, dpi, 96)};
             return 0;
         }
+        case WM_SYSCOMMAND:
+            if (platform.fullscreen && ((wparam & 0xFFF0) == SC_MOVE || (wparam & 0xFFF0) == SC_SIZE || (wparam & 0xFFF0) == SC_MAXIMIZE)) return 0;
+            break;
         }
         return CallWindowProcW(platform.original_window_proc, window, message, wparam, lparam);
     }
