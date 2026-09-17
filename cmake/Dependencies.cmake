@@ -2,6 +2,19 @@ include_guard(GLOBAL)
 
 include(FetchContent)
 
+FetchContent_Declare(glfw
+        URL "https://codeload.github.com/glfw/glfw/zip/refs/tags/3.4"
+        URL_HASH SHA256=A133DDC3D3C66143EBA9035621DB8E0BCF34DBA1EE9514A9E23E96AFD39FD57A
+        SYSTEM EXCLUDE_FROM_ALL)
+FetchContent_Declare(imgui
+        URL "https://codeload.github.com/ocornut/imgui/zip/b334d19b667958ed970000073644d911fae17e57"
+        URL_HASH SHA256=504BC8171B80B8C92F035EBC899F6B3086C9CFA56EFADEE4962753DEB38626A2
+        SYSTEM EXCLUDE_FROM_ALL)
+FetchContent_Declare(implot
+        GIT_REPOSITORY "https://github.com/epezent/implot.git"
+        GIT_TAG 7eeb9168d2e5e6b14e266d8782ecf7e649dfc3a4
+        SYSTEM EXCLUDE_FROM_ALL)
+
 FetchContent_Declare(
         nlohmann_json
         URL "https://github.com/nlohmann/json/archive/refs/tags/v3.12.0.tar.gz"
