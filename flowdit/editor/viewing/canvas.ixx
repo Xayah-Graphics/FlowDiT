@@ -1,19 +1,21 @@
 module;
 #include <imgui.h>
 export module flowdit.editor.viewing.canvas;
-export import flowdit.io.output;
+export import flowdit.dataset.types;
+import flowdit.editor.graphics.renderer;
 import std;
 export namespace flowdit::editor {
     struct Picture final {
         std::uint64_t texture{};
-        SampleInfo info;
-        SamplingResult images;
+        ImageSpecification specification;
+        std::vector<std::uint32_t> labels;
+        void upload(Renderer& renderer, const ImageSpecification& image, std::span<const std::uint32_t> classes, const std::uint8_t* pixels);
     };
     struct Canvas final {
         int selected{-1};
-        float zoom{8}, thumbnail{72};
-        bool fit{true}, nearest{true}, patches{};
+        float zoom{1}, scroll{};
+        bool fit{true}, restore_scroll{true};
         ImVec2 pan{};
-        void draw(std::uint64_t texture, const SamplingResult& images, std::span<const float> times = {});
+        void draw(const Picture& picture);
     };
 } // namespace flowdit::editor

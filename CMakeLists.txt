@@ -118,6 +118,7 @@ if (FLOWDIT_BUILD_EDITOR)
             flowdit/editor/graphics/renderer.cpp
             flowdit/editor/graphics/interop.cpp
             flowdit/editor/viewing/canvas.cpp
+            flowdit/editor/widgets/controls.cpp
             flowdit/editor/panels/dataset.cpp
             flowdit/editor/panels/training.cpp
             flowdit/editor/panels/sampling.cpp
@@ -129,13 +130,14 @@ if (FLOWDIT_BUILD_EDITOR)
             flowdit/editor/graphics/renderer.ixx
             flowdit/editor/graphics/interop.ixx
             flowdit/editor/viewing/canvas.ixx
+            flowdit/editor/widgets/controls.ixx
             flowdit/editor/panels/dataset.ixx
             flowdit/editor/panels/training.ixx
             flowdit/editor/panels/sampling.ixx)
     target_compile_definitions(flowdit_editor PRIVATE GLFW_INCLUDE_NONE GLFW_EXPOSE_NATIVE_WIN32
             FLOWDIT_SHADER_DIRECTORY="${FLOWDIT_SHADER_OUTPUT_DIRECTORY}"
             FLOWDIT_SOURCE_DIRECTORY="${PROJECT_SOURCE_DIR}")
-    target_link_libraries(flowdit_editor PRIVATE flowdit_core flowdit::vulkan flowdit::imgui flowdit::implot CUDA::cudart)
+    target_link_libraries(flowdit_editor PRIVATE flowdit_core flowdit::vulkan flowdit::imgui flowdit::implot CUDA::cudart ole32 uuid dwmapi)
     add_dependencies(flowdit_editor flowdit_shaders)
 endif ()
 
