@@ -13,16 +13,14 @@ export namespace flowdit {
     };
     struct SamplingRequest final {
         SamplingSolver solver{SamplingSolver::heun};
-        std::uint32_t step_count{25u};
+        std::uint32_t step_count{25u}, count{100u};
         float guidance{2.0F};
         std::uint64_t seed{42u};
         std::optional<std::uint32_t> class_index;
     };
     struct SamplingResult final {
-        ModelConfiguration model;
-        std::uint32_t nfe;
-        std::vector<std::uint32_t> labels;
-        std::vector<std::uint8_t> rgba;
+        TensorBatch tensor;
+        std::uint32_t nfe{};
     };
     struct SamplingProgress final {
         std::uint32_t step{}, step_count{}, nfe{};

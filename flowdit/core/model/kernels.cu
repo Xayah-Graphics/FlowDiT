@@ -3,73 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <cuda/launch>
-#include <curand_kernel.h>
 #include <flowdit/cuda.h>
 namespace flowdit::kernels {
     namespace {
         constexpr std::uint32_t thread_count = 256u;
-        __device__ unsigned long long subsequence(const std::uint64_t step, const std::uint32_t batch, const std::uint32_t sample, const std::uint32_t domain) {
-            return (step * batch + sample) * 8ull + domain;
-        }
-        __global__ void make_training_batch_kernel(const std::uint8_t* const images, const std::uint32_t* const dataset_labels, float* const path, float* const target, float* const times, std::uint32_t* const labels, const std::uint64_t* const step, const std::uint64_t* const seed, const std::uint32_t batch, const ImageLayout image, const std::uint32_t image_count, const std::uint32_t class_count, const bool horizontal_flip) {
-            const std::uint32_t image_element_count = image.width * image.height * image.channels;
-            const std::uint32_t patch_width         = image.patch_size * image.patch_size * image.channels;
-            __shared__ std::uint32_t image_index;
-            __shared__ std::uint32_t flip;
-            __shared__ float time;
-            const std::uint32_t sample = blockIdx.x;
-            if (threadIdx.x == 0u) {
-                curandStatePhilox4_32_10_t state{};
-                curand_init(*seed, subsequence(*step, batch, sample, 0u), 0ull, &state);
-                image_index = static_cast<std::uint32_t>(static_cast<std::uint64_t>(curand(&state)) * image_count >> 32u);
-                flip        = (curand(&state) & 1u) && horizontal_flip;
-                curand_init(*seed, subsequence(*step, batch, sample, 1u), 0ull, &state);
-                time = static_cast<float>(curand(&state) >> 8u) * 0x1p-24F;
-                curand_init(*seed, subsequence(*step, batch, sample, 2u), 0ull, &state);
-                labels[sample] = static_cast<float>(curand(&state) >> 8u) * 0x1p-24F < 0.1F ? class_count : dataset_labels[image_index];
-                times[sample]  = time;
-            }
-            __syncthreads();
-            for (std::uint32_t group = threadIdx.x; group < (image_element_count + 3u) / 4u; group += blockDim.x) {
-                curandStatePhilox4_32_10_t state{};
-                curand_init(*seed, subsequence(*step, batch, sample, 3u), static_cast<unsigned long long>(group) * 4ull, &state);
-                const float4 noise = curand_normal4(&state);
-                const float gaussian[4]{noise.x, noise.y, noise.z, noise.w};
-                for (std::uint32_t lane = 0u; lane < 4u; ++lane) {
-                    const std::uint32_t patch_index = group * 4u + lane;
-                    if (patch_index >= image_element_count) continue;
-                    const std::uint32_t token         = patch_index / patch_width;
-                    const std::uint32_t patch_element = patch_index % patch_width;
-                    const std::uint32_t patch_y       = token / (image.width / image.patch_size);
-                    const std::uint32_t patch_x       = token % (image.width / image.patch_size);
-                    const std::uint32_t pixel         = patch_element / image.channels;
-                    const std::uint32_t channel       = patch_element % image.channels;
-                    const std::uint32_t y             = patch_y * image.patch_size + pixel / image.patch_size;
-                    const std::uint32_t unflipped_x   = patch_x * image.patch_size + pixel % image.patch_size;
-                    const std::uint32_t x             = flip == 0u ? unflipped_x : image.width - 1u - unflipped_x;
-                    const std::size_t source          = static_cast<std::size_t>(image_index) * image_element_count + static_cast<std::size_t>(channel) * image.width * image.height + y * image.width + x;
-                    const float data                  = static_cast<float>(images[source]) * (2.0F / 255.0F) - 1.0F;
-                    const std::size_t destination     = static_cast<std::size_t>(sample) * image_element_count + patch_index;
-                    path[destination]                 = fmaf(time, data - gaussian[lane], gaussian[lane]);
-                    target[destination]               = data - gaussian[lane];
-                }
-            }
-        }
-        __global__ void make_sampling_noise_kernel(float* const state, const std::uint64_t seed, const std::uint32_t batch, const std::uint32_t image_element_count) {
-            const std::uint32_t sample = blockIdx.x;
-            for (std::uint32_t group = threadIdx.x; group < (image_element_count + 3u) / 4u; group += blockDim.x) {
-                curandStatePhilox4_32_10_t random{};
-                curand_init(seed, subsequence(0u, batch, sample, 4u), static_cast<unsigned long long>(group) * 4ull, &random);
-                const float4 noise      = curand_normal4(&random);
-                const std::size_t index = static_cast<std::size_t>(sample) * image_element_count + group * 4u;
-                const float gaussian[4]{noise.x, noise.y, noise.z, noise.w};
-                for (std::uint32_t lane = 0; lane < 4u && group * 4u + lane < image_element_count; ++lane) state[index + lane] = gaussian[lane];
-            }
-        }
-        __global__ void make_sampling_time_kernel(float* const times, const float time, const std::uint32_t batch) {
-            const std::uint32_t sample = static_cast<std::uint32_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-            if (sample < batch) times[sample] = time;
-        }
         __global__ void time_embedding_kernel(const float* const times, float* const embedding, const std::uint32_t width, const std::size_t count) {
             const std::size_t index = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
             if (index >= count) return;
@@ -182,70 +119,7 @@ namespace flowdit::kernels {
             modulation_gradient[offset + feature]         = shift_gradient;
             modulation_gradient[offset + width + feature] = scale_gradient;
         }
-        __global__ void flow_matching_sample_loss_kernel(const float* const prediction, const float* const target, float* const prediction_gradient, float* const sample_loss, const std::uint32_t image_element_count) {
-            __shared__ float reduction[thread_count];
-            const std::uint32_t sample = blockIdx.x;
-            float loss{};
-            for (std::uint32_t element = threadIdx.x; element < image_element_count; element += blockDim.x) {
-                const std::size_t index    = static_cast<std::size_t>(sample) * image_element_count + element;
-                const float difference     = prediction[index] - target[index];
-                loss                       = fmaf(difference, difference, loss);
-                prediction_gradient[index] = 2.0F * difference / static_cast<float>(gridDim.x * image_element_count);
-            }
-            reduction[threadIdx.x] = loss;
-            __syncthreads();
-            for (std::uint32_t stride = thread_count / 2u; stride != 0u; stride /= 2u) {
-                if (threadIdx.x < stride) reduction[threadIdx.x] += reduction[threadIdx.x + stride];
-                __syncthreads();
-            }
-            if (threadIdx.x == 0u) sample_loss[sample] = reduction[0];
-        }
-        __global__ void flow_matching_loss_kernel(const float* const sample_loss, float* const loss, const std::uint32_t batch, const std::uint32_t image_element_count) {
-            __shared__ float reduction[thread_count];
-            reduction[threadIdx.x] = threadIdx.x < batch ? sample_loss[threadIdx.x] : 0.0F;
-            __syncthreads();
-            for (std::uint32_t stride = thread_count / 2u; stride != 0u; stride /= 2u) {
-                if (threadIdx.x < stride) reduction[threadIdx.x] += reduction[threadIdx.x + stride];
-                __syncthreads();
-            }
-            if (threadIdx.x == 0u) *loss = reduction[0] / static_cast<float>(batch * image_element_count);
-        }
-        __global__ void add_loss_kernel(const float* const loss, float* const loss_sum) {
-            *loss_sum += *loss;
-        }
-        __global__ void advance_training_state_kernel(std::uint64_t* const step, std::uint64_t* const processed_samples, const std::uint32_t samples_per_step) {
-            ++*step;
-            *processed_samples += samples_per_step;
-        }
-        __global__ void make_labels_kernel(std::uint32_t* const labels, const std::uint32_t batch, const std::uint32_t class_index, const std::uint32_t class_count) {
-            const std::uint32_t sample = static_cast<std::uint32_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-            if (sample < batch) labels[sample] = class_index == UINT32_MAX ? sample % class_count : class_index;
-        }
-        __global__ void combine_guidance_kernel(const float* const conditional, const float* const unconditional, float* const output, const float guidance, const std::size_t count) {
-            const std::size_t index = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-            if (index < count) output[index] = fmaf(guidance, conditional[index] - unconditional[index], unconditional[index]);
-        }
-        __global__ void euler_step_kernel(float* const state, const float* const velocity, const float step_size, const std::size_t count) {
-            const std::size_t index = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-            if (index < count) state[index] = fmaf(step_size, velocity[index], state[index]);
-        }
-        __global__ void heun_predict_kernel(const float* const state, const float* const velocity, float* const prediction, const float step_size, const std::size_t count) {
-            const std::size_t index = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-            if (index < count) prediction[index] = fmaf(step_size, velocity[index], state[index]);
-        }
-        __global__ void heun_step_kernel(float* const state, const float* const first_velocity, const float* const second_velocity, const float step_size, const std::size_t count) {
-            const std::size_t index = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-            if (index < count) state[index] = fmaf(0.5F * step_size, first_velocity[index] + second_velocity[index], state[index]);
-        }
-        __global__ void rk4_intermediate_kernel(const float* const state, const float* const velocity, float* const intermediate, const float step_size, const std::size_t count) {
-            const std::size_t index = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-            if (index < count) intermediate[index] = fmaf(step_size, velocity[index], state[index]);
-        }
-        __global__ void rk4_step_kernel(float* const state, const float* const first, const float* const second, const float* const third, const float* const fourth, const float step_size, const std::size_t count) {
-            const std::size_t index = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-            if (index < count) state[index] += step_size * (first[index] + 2.0F * second[index] + 2.0F * third[index] + fourth[index]) / 6.0F;
-        }
-        __global__ void unpatchify_kernel(const float* const patches, std::uint8_t* const rgba, const std::size_t count, const ImageLayout image) {
+        __global__ void unpatchify_kernel(const float* const patches, float* const values, const std::size_t count, const TensorLayout image) {
             const std::size_t index = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
             if (index >= count) return;
             const std::uint32_t image_pixels = image.width * image.height;
@@ -256,23 +130,10 @@ namespace flowdit::kernels {
             const std::uint32_t x            = pixel % image.width;
             const std::uint32_t token        = (y / image.patch_size) * (image.width / image.patch_size) + x / image.patch_size;
             const std::uint32_t patch_pixel  = (y % image.patch_size) * image.patch_size + x % image.patch_size;
-            for (std::uint32_t channel = 0u; channel < 3u; ++channel) {
-                const std::uint32_t source_channel = image.channels == 1u ? 0u : channel;
-                const float value                  = fminf(fmaxf(patches[sample * image_pixels * image.channels + token * patch_width + patch_pixel * image.channels + source_channel], -1.0F), 1.0F);
-                rgba[index * 4u + channel]         = static_cast<std::uint8_t>(rintf((value + 1.0F) * 127.5F));
-            }
-            rgba[index * 4u + 3u] = 255u;
+            for (std::uint32_t channel = 0u; channel < image.channels; ++channel)
+                values[(sample * image.channels + channel) * image_pixels + pixel] = patches[sample * image_pixels * image.channels + token * patch_width + patch_pixel * image.channels + channel];
         }
     } // namespace
-    void make_training_batch(const ::cuda::stream_ref stream, const std::uint8_t* const images, const std::uint32_t* const dataset_labels, float* const path, float* const target, float* const times, std::uint32_t* const labels, const std::uint64_t* const step, const std::uint64_t* const seed, const std::uint32_t batch, const ImageLayout image, const std::uint32_t image_count, const std::uint32_t class_count, const bool horizontal_flip) {
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(batch), ::cuda::block_dims(thread_count))), make_training_batch_kernel, images, dataset_labels, path, target, times, labels, step, seed, batch, image, image_count, class_count, horizontal_flip);
-    }
-    void make_sampling_noise(const ::cuda::stream_ref stream, float* const state, const std::uint64_t seed, const std::uint32_t batch, const std::uint32_t image_element_count) {
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(batch), ::cuda::block_dims(thread_count))), make_sampling_noise_kernel, state, seed, batch, image_element_count);
-    }
-    void make_sampling_time(const ::cuda::stream_ref stream, float* const times, const float time, const std::uint32_t batch) {
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(::cuda::ceil_div(batch, thread_count)), ::cuda::block_dims(thread_count))), make_sampling_time_kernel, times, time, batch);
-    }
     void make_time_embedding(const ::cuda::stream_ref stream, const float* const times, float* const embedding, const std::uint32_t batch, const std::uint32_t width) {
         const std::size_t count = static_cast<std::size_t>(batch) * width;
         ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(::cuda::ceil_div(count, static_cast<std::size_t>(thread_count))), ::cuda::block_dims(thread_count))), time_embedding_kernel, times, embedding, width, count);
@@ -300,39 +161,8 @@ namespace flowdit::kernels {
         ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(batch * sequence_size), ::cuda::block_dims(thread_count))), final_adaln_input_backward_kernel, input, modulation, output_gradient, means, inverse_standard_deviations, input_gradient, sequence_size, width);
         ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(batch), ::cuda::block_dims(thread_count))), final_adaln_modulation_backward_kernel, input, output_gradient, means, inverse_standard_deviations, modulation_gradient, sequence_size, width);
     }
-    void flow_matching_loss(const ::cuda::stream_ref stream, const float* const prediction, const float* const target, float* const prediction_gradient, float* const sample_loss, float* const loss, const std::uint32_t batch, const std::uint32_t image_element_count) {
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(batch), ::cuda::block_dims(thread_count))), flow_matching_sample_loss_kernel, prediction, target, prediction_gradient, sample_loss, image_element_count);
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(1u), ::cuda::block_dims(thread_count))), flow_matching_loss_kernel, sample_loss, loss, batch, image_element_count);
-    }
-    void add_loss(const ::cuda::stream_ref stream, const float* const loss, float* const loss_sum) {
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(1u), ::cuda::block_dims(1u))), add_loss_kernel, loss, loss_sum);
-    }
-    void advance_training_state(const ::cuda::stream_ref stream, std::uint64_t* const step, std::uint64_t* const processed_samples, const std::uint32_t samples_per_step) {
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(1u), ::cuda::block_dims(1u))), advance_training_state_kernel, step, processed_samples, samples_per_step);
-    }
-    void make_labels(const ::cuda::stream_ref stream, std::uint32_t* const labels, const std::uint32_t batch, const std::uint32_t class_index, const std::uint32_t class_count) {
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(::cuda::ceil_div(batch, thread_count)), ::cuda::block_dims(thread_count))), make_labels_kernel, labels, batch, class_index, class_count);
-    }
-    void combine_guidance(const ::cuda::stream_ref stream, const float* const conditional, const float* const unconditional, float* const output, const float guidance, const std::size_t count) {
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(::cuda::ceil_div(count, static_cast<std::size_t>(thread_count))), ::cuda::block_dims(thread_count))), combine_guidance_kernel, conditional, unconditional, output, guidance, count);
-    }
-    void euler_step(const ::cuda::stream_ref stream, float* const state, const float* const velocity, const float step_size, const std::size_t count) {
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(::cuda::ceil_div(count, static_cast<std::size_t>(thread_count))), ::cuda::block_dims(thread_count))), euler_step_kernel, state, velocity, step_size, count);
-    }
-    void heun_predict(const ::cuda::stream_ref stream, const float* const state, const float* const velocity, float* const prediction, const float step_size, const std::size_t count) {
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(::cuda::ceil_div(count, static_cast<std::size_t>(thread_count))), ::cuda::block_dims(thread_count))), heun_predict_kernel, state, velocity, prediction, step_size, count);
-    }
-    void heun_step(const ::cuda::stream_ref stream, float* const state, const float* const first_velocity, const float* const second_velocity, const float step_size, const std::size_t count) {
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(::cuda::ceil_div(count, static_cast<std::size_t>(thread_count))), ::cuda::block_dims(thread_count))), heun_step_kernel, state, first_velocity, second_velocity, step_size, count);
-    }
-    void rk4_intermediate(const ::cuda::stream_ref stream, const float* const state, const float* const velocity, float* const intermediate, const float step_size, const std::size_t count) {
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(::cuda::ceil_div(count, static_cast<std::size_t>(thread_count))), ::cuda::block_dims(thread_count))), rk4_intermediate_kernel, state, velocity, intermediate, step_size, count);
-    }
-    void rk4_step(const ::cuda::stream_ref stream, float* const state, const float* const first, const float* const second, const float* const third, const float* const fourth, const float step_size, const std::size_t count) {
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(::cuda::ceil_div(count, static_cast<std::size_t>(thread_count))), ::cuda::block_dims(thread_count))), rk4_step_kernel, state, first, second, third, fourth, step_size, count);
-    }
-    void unpatchify(const ::cuda::stream_ref stream, const float* const patches, std::uint8_t* const rgba, const std::uint32_t batch, const ImageLayout image) {
+    void unpatchify(const ::cuda::stream_ref stream, const float* const patches, float* const values, const std::uint32_t batch, const TensorLayout image) {
         const std::size_t count = static_cast<std::size_t>(batch) * image.width * image.height;
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(::cuda::ceil_div(count, static_cast<std::size_t>(thread_count))), ::cuda::block_dims(thread_count))), unpatchify_kernel, patches, rgba, count, image);
+        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(::cuda::ceil_div(count, static_cast<std::size_t>(thread_count))), ::cuda::block_dims(thread_count))), unpatchify_kernel, patches, values, count, image);
     }
 } // namespace flowdit::kernels

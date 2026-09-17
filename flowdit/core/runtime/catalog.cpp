@@ -10,22 +10,9 @@ namespace flowdit {
             const auto key = folder.path().filename().string();
             auto& dataset = datasets[key];
             dataset.directory = folder.path();
-            dataset.name = key;
             try {
-                if (std::filesystem::exists(folder.path() / "data_batch_1.bin")) {
-                    dataset.kind = DatasetKind::cifar10;
-                    dataset.name = "CIFAR-10";
-                    dataset.count = 50'000;
-                } else if (std::filesystem::exists(folder.path() / "train-images-idx3-ubyte")) {
-                    dataset.kind = DatasetKind::mnist;
-                    dataset.name = "MNIST";
-                    std::ifstream images{folder.path() / "train-images-idx3-ubyte", std::ios::binary};
-                    images.exceptions(std::ios::badbit | std::ios::failbit);
-                    images.seekg(4);
-                    images.read(reinterpret_cast<char*>(&dataset.count), sizeof(dataset.count));
-                    if constexpr (std::endian::native == std::endian::little) dataset.count = std::byteswap(dataset.count);
-                }
-                if (dataset.kind) refresh(dataset);
+                dataset.info = inspect_dataset(folder.path());
+                if (dataset.info) refresh(dataset);
             } catch (const std::exception& failure) {
                 dataset.error = failure.what();
             }
@@ -46,7 +33,6 @@ namespace flowdit {
             try {
                 run.configuration = output::read_configuration(directory);
                 run.configuration.dataset = dataset.directory;
-                run.configuration.dataset_type = *dataset.kind;
                 std::vector<std::filesystem::path> paths;
                 if (changed.empty()) {
                     const auto checkpoints = directory / "checkpoints";
@@ -64,7 +50,7 @@ namespace flowdit {
                         const auto file = serialization::safetensors::read(path, std::array<std::string_view, 1>{"training.state"});
                         if (file.metadata.at("flowdit.system") != "flow-matching") throw std::runtime_error{"Unsupported checkpoint format"};
                         checkpoint.model = deserialize_model(file.metadata.at("flowdit.model"));
-                        if (checkpoint.model.image.name != dataset.name) throw std::runtime_error{"Checkpoint belongs to " + checkpoint.model.image.name};
+                        checkpoint.image = deserialize_representation(file.metadata.at("flowdit.representation"));
                         std::array<std::uint64_t, 4> state;
                         std::memcpy(state.data(), file.tensors.front().data.data(), sizeof(state));
                         checkpoint.step = state[0];
@@ -83,10 +69,8 @@ namespace flowdit {
         }
     }
     RunConfiguration Catalog::training(const DatasetEntry& dataset) const {
-        RunConfiguration result;
+        auto result = training_configuration(dataset.info->specification);
         result.dataset = dataset.directory;
-        result.dataset_type = *dataset.kind;
-        result.end_step = *dataset.kind == DatasetKind::mnist ? 20'000 : 400'000;
         result.output = dataset.directory / ".flowdit" / "runs" / std::format("{:%Y%m%d-%H%M%S}", std::chrono::floor<std::chrono::microseconds>(std::chrono::system_clock::now()));
         return result;
     }

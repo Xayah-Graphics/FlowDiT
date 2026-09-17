@@ -25,7 +25,7 @@ export namespace flowdit::editor {
         std::array<Slot, 2> slots;
         Interop(graphics::Device& device, int cuda_device);
         ~Interop();
-        void publish(const FrameInfo& info, const std::uint8_t* pixels, std::uint32_t width, std::uint32_t height, ::cuda::stream_ref stream);
+        void publish(const FrameInfo& info, const std::uint8_t* pixels, ::cuda::stream_ref stream);
         std::vector<Frame> receive();
 
     private:

@@ -39,7 +39,7 @@ namespace flowdit::editor {
             if (!history.preview.empty()) {
                 const auto loaded = output::read_sample(history.preview);
                 preview = loaded.info;
-                picture.upload(renderer, loaded.images.model.image, loaded.images.labels, loaded.images.rgba.data());
+                picture.upload(renderer, loaded.info.image, loaded.info.labels, loaded.rgba.data());
             }
         } catch (const std::exception& failure) {
             error = failure.what();
@@ -52,7 +52,7 @@ namespace flowdit::editor {
         for (const auto& sample : update.samples) {
             if (!sample->info.training_step || sample->info.source != ParameterSource::exponential_average) continue;
             preview = sample->info;
-            picture.upload(renderer, sample->images.model.image, sample->images.labels, sample->images.rgba.data());
+            picture.upload(renderer, sample->info.image, sample->info.labels, sample->rgba.data());
         }
     }
     bool TrainingPanel::draw(Renderer& renderer, Session& session, SessionStatus& status, const Catalog& catalog, const DatasetEntry& entry, const std::shared_ptr<const Dataset>& dataset) {

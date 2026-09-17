@@ -14,13 +14,15 @@ namespace flowdit::editor {
         }
     }
     std::uint64_t SamplingPanel::preview(Renderer& renderer, const FrameInfo& info) {
-        if (!picture.texture || picture.specification.width != info.model.image.width || picture.specification.height != info.model.image.height) {
+        if (!picture.texture || picture.specification.width != info.image.width || picture.specification.height != info.image.height || picture.labels.size() != info.request.count) {
             if (picture.texture) renderer.retire(picture.texture);
-            picture.texture = renderer.texture({info.model.image.width, 100u * info.model.image.height});
+            picture.columns = std::min(info.request.count, 10u);
+            picture.rows = (info.request.count + picture.columns - 1) / picture.columns;
+            picture.texture = renderer.texture({picture.columns * info.image.width, picture.rows * info.image.height});
         }
-        picture.specification = info.model.image;
-        picture.labels.resize(100);
-        for (std::uint32_t i = 0; i < 100; ++i) picture.labels[i] = info.request.class_index.value_or(i % static_cast<std::uint32_t>(info.model.image.classes.size()));
+        picture.specification = info.image;
+        picture.labels.resize(info.request.count);
+        for (std::uint32_t i = 0; i < info.request.count; ++i) picture.labels[i] = info.request.class_index.value_or(i % static_cast<std::uint32_t>(info.image.classes.size()));
         return picture.texture;
     }
     void SamplingPanel::select(const DatasetEntry& dataset, std::string name, const std::size_t index) {
@@ -67,15 +69,15 @@ namespace flowdit::editor {
         }
         ImGui::Spacing();
         ImGui::BeginDisabled(checkpoint.path.empty() || !error.empty());
-        const auto& model = checkpoint.model;
+        const auto& image = checkpoint.image;
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("Class");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(-1);
-        if (ImGui::BeginCombo("##class", category < 0 ? "All classes" : model.image.classes[category].c_str())) {
+        if (ImGui::BeginCombo("##class", category < 0 ? "All classes" : image.classes[category].c_str())) {
             if (ImGui::Selectable("All classes", category < 0)) category = -1;
-            for (int i = 0; i < static_cast<int>(model.image.classes.size()); ++i)
-                if (ImGui::Selectable(model.image.classes[i].c_str(), category == i)) category = i;
+            for (int i = 0; i < static_cast<int>(image.classes.size()); ++i)
+                if (ImGui::Selectable(image.classes[i].c_str(), category == i)) category = i;
             ImGui::EndCombo();
         }
         if (ImGui::BeginTable("sampling-parameters", 2, ImGuiTableFlags_SizingStretchSame | ImGuiTableFlags_NoSavedSettings)) {
@@ -105,7 +107,7 @@ namespace flowdit::editor {
                 attached = true;
                 request.class_index = category < 0 ? std::nullopt : std::optional<std::uint32_t>{static_cast<std::uint32_t>(category)};
                 const auto path = catalog.inference(dataset.runs.at(run));
-                result = {.path = path, .checkpoint = checkpoint.path, .request = request, .model = model};
+                result = {.path = path, .checkpoint = checkpoint.path, .request = request, .model = checkpoint.model, .image = image};
                 session.start(SampleRequest{.checkpoint = checkpoint.path, .output = path, .sampling = request});
                 status = {.mode = Mode::sampling, .stage = Stage::loading, .busy = true, .started = std::chrono::steady_clock::now()};
                 progress = status;
@@ -140,7 +142,7 @@ namespace flowdit::editor {
         canvas.draw(picture);
         ImGui::EndChild();
         const auto& sampling = result.request;
-        ImGui::TextDisabled("%s / %s", progress.stage == Stage::complete ? "Inference" : "Inference preview", sampling.class_index ? result.model.image.classes[*sampling.class_index].c_str() : "All classes");
+        ImGui::TextDisabled("%s / %s", progress.stage == Stage::complete ? "Inference" : "Inference preview", sampling.class_index ? result.image.classes[*sampling.class_index].c_str() : "All classes");
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%u steps / CFG %.2f / seed %llu\n%s\n%s", sampling.step_count, sampling.guidance, sampling.seed, result.checkpoint.string().c_str(), result.path.string().c_str());
     }
 } // namespace flowdit::editor

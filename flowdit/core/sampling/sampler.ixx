@@ -9,11 +9,12 @@ import std;
 export namespace flowdit {
     struct Sampler final {
         ModelConfiguration configuration;
-        Sampler(const std::filesystem::path& checkpoint, int device_ordinal);
+        ::cuda::stream stream;
+        std::uint32_t batch;
+        Sampler(const ModelConfiguration& configuration, const std::filesystem::path& checkpoint, int device_ordinal, std::uint32_t batch);
         std::optional<SamplingResult> sample(const SamplingRequest& request, const SamplingObserver& observer = {});
 
     private:
-        ::cuda::stream stream;
         neural::MatmulRuntime matmul;
         FlowDiT model;
         neural::InferenceParameterBuffer parameters;

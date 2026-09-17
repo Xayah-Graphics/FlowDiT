@@ -20,7 +20,7 @@ export namespace flowdit::editor {
         void present();
         std::uint64_t texture(vk::Extent2D extent, vk::Format format = vk::Format::eR8G8B8A8Srgb);
         void upload(std::uint64_t id, const void* pixels, int width, int height, bool initial);
-        void copy(std::uint64_t id, const graphics::Buffer& source, vk::Semaphore semaphore, std::uint64_t ready);
+        void copy(std::uint64_t id, const graphics::Buffer& source, vk::Semaphore semaphore, std::uint64_t ready, std::uint32_t width, std::uint32_t height, std::uint32_t count);
         void discard(vk::Semaphore semaphore, std::uint64_t ready);
         void retire(std::uint64_t id);
 

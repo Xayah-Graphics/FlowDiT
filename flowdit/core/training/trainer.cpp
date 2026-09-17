@@ -1,29 +1,27 @@
 module;
-#include "../model/kernels.h"
+#include "kernels.h"
 #include <cuda_runtime_api.h>
 #include <flowdit/cuda.h>
 module flowdit.training.trainer;
 import std;
-import flowdit.dataset.types;
 import flowdit.model;
-import flowdit.sampling.runtime;
 import flowdit.neural.matmul;
 import flowdit.neural.training_state;
 import flowdit.serialization.safetensors;
 namespace flowdit {
-    Trainer::Trainer(const Dataset& training_set, const int device_ordinal, const std::uint64_t seed, const neural::TrainingConfiguration& configuration, const std::uint32_t patch_size)
-        : state{.seed = seed}, value_count{static_cast<std::size_t>(batch) * training_set.specification.width * training_set.specification.height * training_set.specification.channels}, image_count{static_cast<std::uint32_t>(training_set.labels.size())}, horizontal_flip{training_set.horizontal_flip}, stream{::cuda::devices[device_ordinal]}, dataset_images{stream, ::cuda::device_default_memory_pool(stream.device()), training_set.images.size(), ::cuda::no_init}, dataset_labels{stream, ::cuda::device_default_memory_pool(stream.device()), training_set.labels.size(), ::cuda::no_init}, matmul{stream, flow_matmul_runtime_configuration}, model{stream, matmul, {training_set.specification, patch_size}}, parameter_buffer{stream, model.parameters.parameter_count}, training_configuration{configuration}, model_workspace_layout{batch, model.configuration}, model_workspace{stream, ::cuda::device_default_memory_pool(stream.device()), model_workspace_layout.byte_count, ::cuda::no_init},
-          path{stream, ::cuda::device_default_memory_pool(stream.device()), value_count, ::cuda::no_init}, target{stream, ::cuda::device_default_memory_pool(stream.device()), value_count, ::cuda::no_init}, times{stream, ::cuda::device_default_memory_pool(stream.device()), batch, ::cuda::no_init}, labels{stream, ::cuda::device_default_memory_pool(stream.device()), batch, ::cuda::no_init}, patch_gradient{stream, ::cuda::device_default_memory_pool(stream.device()), value_count, ::cuda::no_init}, loss{stream, ::cuda::device_default_memory_pool(stream.device()), 1uz, ::cuda::no_init}, loss_sum{stream, ::cuda::device_default_memory_pool(stream.device()), 1uz, ::cuda::no_init}, device_step{stream, ::cuda::device_default_memory_pool(stream.device()), 1uz, ::cuda::no_init}, device_processed_samples{stream, ::cuda::device_default_memory_pool(stream.device()), 1uz, ::cuda::no_init}, device_seed{stream, ::cuda::device_default_memory_pool(stream.device()), 1uz, ::cuda::no_init} {
-        ::cuda::copy_bytes(stream, ::cuda::std::span<const std::uint8_t>{training_set.images.data(), training_set.images.size()}, dataset_images);
-        ::cuda::copy_bytes(stream, ::cuda::std::span<const std::uint32_t>{training_set.labels.data(), training_set.labels.size()}, dataset_labels);
+    Trainer::Trainer(const ::cuda::stream_ref source_stream, const ModelConfiguration& configuration, const std::uint32_t source_batch, const std::uint64_t seed, const neural::TrainingConfiguration& optimizer)
+        : batch{source_batch}, state{.seed = seed}, value_count{static_cast<std::size_t>(batch) * configuration.shape.width * configuration.shape.height * configuration.shape.channels}, stream{source_stream}, input_values{stream, ::cuda::device_default_memory_pool(stream.device()), value_count, ::cuda::no_init}, input_labels{stream, ::cuda::device_default_memory_pool(stream.device()), batch, ::cuda::no_init}, matmul{stream, flow_matmul_runtime_configuration}, model{stream, matmul, configuration}, parameter_buffer{stream, model.parameters.parameter_count}, training_configuration{optimizer}, model_workspace_layout{batch, model.configuration}, model_workspace{stream, ::cuda::device_default_memory_pool(stream.device()), model_workspace_layout.byte_count, ::cuda::no_init},
+          path{stream, ::cuda::device_default_memory_pool(stream.device()), value_count, ::cuda::no_init}, target{stream, ::cuda::device_default_memory_pool(stream.device()), value_count, ::cuda::no_init}, times{stream, ::cuda::device_default_memory_pool(stream.device()), batch, ::cuda::no_init}, labels{stream, ::cuda::device_default_memory_pool(stream.device()), batch, ::cuda::no_init}, patch_gradient{stream, ::cuda::device_default_memory_pool(stream.device()), value_count, ::cuda::no_init}, loss{stream, ::cuda::device_default_memory_pool(stream.device()), 1uz, ::cuda::no_init}, sample_loss{stream, ::cuda::device_default_memory_pool(stream.device()), batch, ::cuda::no_init}, device_step{stream, ::cuda::device_default_memory_pool(stream.device()), 1uz, ::cuda::no_init}, device_processed_samples{stream, ::cuda::device_default_memory_pool(stream.device()), 1uz, ::cuda::no_init}, device_seed{stream, ::cuda::device_default_memory_pool(stream.device()), 1uz, ::cuda::no_init} {
+        ::cuda::fill_bytes(stream, input_values, 0);
+        ::cuda::fill_bytes(stream, input_labels, 0);
         parameter_buffer.initialize(model.initialize_parameters(seed));
         const std::uint64_t initial_step = 1u;
         ::cuda::copy_bytes(stream, ::cuda::std::span<const std::uint64_t>{&initial_step, 1uz}, device_step);
         ::cuda::copy_bytes(stream, ::cuda::std::span<const std::uint64_t>{&state.processed_samples, 1uz}, device_processed_samples);
         ::cuda::copy_bytes(stream, ::cuda::std::span<const std::uint64_t>{&state.seed, 1uz}, device_seed);
-        kernels::make_training_batch(stream, dataset_images.data(), dataset_labels.data(), path.data(), target.data(), times.data(), labels.data(), device_step.data(), device_seed.data(), batch, {model.configuration.image.width, model.configuration.image.height, model.configuration.image.channels, model.configuration.patch_size}, image_count, static_cast<std::uint32_t>(model.configuration.image.classes.size()), horizontal_flip);
+        kernels::make_training_batch(stream, input_values.data(), input_labels.data(), path.data(), target.data(), times.data(), labels.data(), device_step.data(), device_seed.data(), batch, {model.configuration.shape.width, model.configuration.shape.height, model.configuration.shape.channels, model.configuration.patch_size}, model.configuration.class_count);
         model.forward(parameter_buffer.parameters.data(), path.data(), times.data(), labels.data(), model_workspace.data(), model_workspace_layout);
-        model.loss(target.data(), loss.data(), model_workspace.data(), model_workspace_layout);
+        kernels::flow_matching_loss(stream, reinterpret_cast<const float*>(model_workspace.data() + model_workspace_layout.velocity), target.data(), reinterpret_cast<float*>(model_workspace.data() + model_workspace_layout.velocity_gradient), sample_loss.data(), loss.data(), batch, static_cast<std::uint32_t>(value_count / batch));
         model.backward(parameter_buffer.parameters.data(), parameter_buffer.gradients.data(), path.data(), times.data(), labels.data(), patch_gradient.data(), model_workspace.data(), model_workspace_layout);
         parameter_buffer.clear_gradients();
         stream.sync();
@@ -36,29 +34,18 @@ namespace flowdit {
         if (graph_execution != nullptr) cudaGraphExecDestroy(graph_execution);
         if (graph != nullptr) cudaGraphDestroy(graph);
     }
-    TrainingStatistics Trainer::optimize(const std::uint64_t iterations) {
-        ::cuda::fill_bytes(stream, loss_sum, 0u);
-        const auto start = std::chrono::steady_clock::now();
-        for (std::uint64_t iteration = 0u; iteration < iterations; ++iteration)
-            if (const cudaError_t status = cudaGraphLaunch(graph_execution, stream.get()); status != cudaSuccess) throw std::runtime_error{std::format("CUDA graph launch: {}", cudaGetErrorString(status))};
-        float accumulated_loss{};
-        ::cuda::copy_bytes(stream, loss_sum, ::cuda::std::span<float>{&accumulated_loss, 1uz});
+    float Trainer::optimize(const TensorBatch& input) {
+        ::cuda::copy_bytes(stream, ::cuda::std::span<const float>{input.values, value_count}, input_values);
+        ::cuda::copy_bytes(stream, ::cuda::std::span<const std::uint32_t>{input.labels, batch}, input_labels);
+        if (const cudaError_t status = cudaGraphLaunch(graph_execution, stream.get()); status != cudaSuccess) throw std::runtime_error{std::format("CUDA graph launch: {}", cudaGetErrorString(status))};
+        float value{};
+        ::cuda::copy_bytes(stream, loss, ::cuda::std::span<float>{&value, 1uz});
         stream.sync();
-        const double elapsed = std::chrono::duration<double>{std::chrono::steady_clock::now() - start}.count();
-        state.step += iterations;
-        state.processed_samples += iterations * batch;
-        state.elapsed_seconds += elapsed;
-        return {
-            .average_loss       = accumulated_loss / static_cast<float>(iterations),
-            .elapsed_seconds    = elapsed,
-        };
+        ++state.step;
+        state.processed_samples += batch;
+        return value;
     }
-    std::optional<SamplingResult> Trainer::sample(const SamplingRequest& request, const ParameterSource source, const SamplingObserver& observer) {
-        SamplingRuntime runtime{stream, model};
-        if (source == ParameterSource::parameters) return runtime.sample(parameter_buffer.parameters.data(), request, observer);
-        return runtime.sample(parameter_buffer.ema.data(), request, observer);
-    }
-    void Trainer::save(const std::filesystem::path& path) const {
+    void Trainer::save(const std::filesystem::path& path, std::map<std::string, std::string> metadata) const {
         const neural::ParameterState parameters = parameter_buffer.download();
         const std::array<std::uint64_t, 4u> training_state{state.step, state.processed_samples, state.seed, std::bit_cast<std::uint64_t>(state.elapsed_seconds)};
         const std::array<serialization::safetensors::TensorView, 5u> tensors{
@@ -68,7 +55,8 @@ namespace flowdit {
             serialization::safetensors::TensorView{"model.ema", "F32", {parameters.ema.size()}, parameters.ema.data(), parameters.ema.size() * sizeof(float)},
             serialization::safetensors::TensorView{"training.state", "U64", {training_state.size()}, training_state.data(), training_state.size() * sizeof(std::uint64_t)},
         };
-        serialization::safetensors::write(path, "flow-matching", tensors, {{"flowdit.model", serialize_model(model.configuration)}});
+        metadata["flowdit.model"] = serialize_model(model.configuration);
+        serialization::safetensors::write(path, "flow-matching", tensors, metadata);
     }
     void Trainer::load(const std::filesystem::path& path) {
         const serialization::safetensors::File file = serialization::safetensors::read(path);
@@ -97,12 +85,11 @@ namespace flowdit {
         stream.sync();
     }
     void Trainer::training_step() {
-        kernels::make_training_batch(stream, dataset_images.data(), dataset_labels.data(), path.data(), target.data(), times.data(), labels.data(), device_step.data(), device_seed.data(), batch, {model.configuration.image.width, model.configuration.image.height, model.configuration.image.channels, model.configuration.patch_size}, image_count, static_cast<std::uint32_t>(model.configuration.image.classes.size()), horizontal_flip);
+        kernels::make_training_batch(stream, input_values.data(), input_labels.data(), path.data(), target.data(), times.data(), labels.data(), device_step.data(), device_seed.data(), batch, {model.configuration.shape.width, model.configuration.shape.height, model.configuration.shape.channels, model.configuration.patch_size}, model.configuration.class_count);
         model.forward(parameter_buffer.parameters.data(), path.data(), times.data(), labels.data(), model_workspace.data(), model_workspace_layout);
-        model.loss(target.data(), loss.data(), model_workspace.data(), model_workspace_layout);
+        kernels::flow_matching_loss(stream, reinterpret_cast<const float*>(model_workspace.data() + model_workspace_layout.velocity), target.data(), reinterpret_cast<float*>(model_workspace.data() + model_workspace_layout.velocity_gradient), sample_loss.data(), loss.data(), batch, static_cast<std::uint32_t>(value_count / batch));
         model.backward(parameter_buffer.parameters.data(), parameter_buffer.gradients.data(), path.data(), times.data(), labels.data(), patch_gradient.data(), model_workspace.data(), model_workspace_layout);
         parameter_buffer.step(training_configuration, device_step.data(), device_processed_samples.data(), batch);
-        kernels::add_loss(stream, loss.data(), loss_sum.data());
         kernels::advance_training_state(stream, device_step.data(), device_processed_samples.data(), batch);
     }
 } // namespace flowdit

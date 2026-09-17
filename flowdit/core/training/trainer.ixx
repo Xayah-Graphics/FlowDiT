@@ -3,9 +3,7 @@ module;
 #include <flowdit/cuda.h>
 export module flowdit.training.trainer;
 import std;
-import flowdit.dataset.types;
 import flowdit.model;
-export import flowdit.sampling.runtime;
 import flowdit.neural.matmul;
 export import flowdit.neural.training_state;
 export namespace flowdit {
@@ -15,34 +13,29 @@ export namespace flowdit {
         std::uint64_t seed{};
         double elapsed_seconds{};
     };
-    struct TrainingStatistics final {
-        float average_loss;
-        double elapsed_seconds;
-    };
     struct Trainer final {
-        inline static constexpr std::uint32_t batch = 256u;
+        std::uint32_t batch;
         TrainingState state;
-        Trainer(const Dataset& training_set, int device_ordinal, std::uint64_t seed, const neural::TrainingConfiguration& configuration = {}, std::uint32_t patch_size = 2u);
+        Trainer(::cuda::stream_ref stream, const ModelConfiguration& model, std::uint32_t batch, std::uint64_t seed, const neural::TrainingConfiguration& configuration);
         ~Trainer() noexcept;
         Trainer(const Trainer&)            = delete;
         Trainer& operator=(const Trainer&) = delete;
         Trainer(Trainer&&)                 = delete;
         Trainer& operator=(Trainer&&)      = delete;
-        TrainingStatistics optimize(std::uint64_t iterations);
-        std::optional<SamplingResult> sample(const SamplingRequest& request, ParameterSource source = ParameterSource::exponential_average, const SamplingObserver& observer = {});
-        void save(const std::filesystem::path& path) const;
+        float optimize(const TensorBatch& input);
+        void save(const std::filesystem::path& path, std::map<std::string, std::string> metadata) const;
         void load(const std::filesystem::path& path);
 
     private:
         std::size_t value_count;
-        std::uint32_t image_count;
-        bool horizontal_flip;
-        ::cuda::stream stream;
-        ::cuda::device_buffer<std::uint8_t> dataset_images;
-        ::cuda::device_buffer<std::uint32_t> dataset_labels;
+        ::cuda::stream_ref stream;
+        ::cuda::device_buffer<float> input_values;
+        ::cuda::device_buffer<std::uint32_t> input_labels;
         neural::MatmulRuntime matmul;
+    public:
         FlowDiT model;
         neural::ParameterBuffer parameter_buffer;
+    private:
         neural::TrainingConfiguration training_configuration;
         FlowDiTWorkspaceLayout model_workspace_layout;
         ::cuda::device_buffer<std::uint8_t> model_workspace;
@@ -52,7 +45,7 @@ export namespace flowdit {
         ::cuda::device_buffer<std::uint32_t> labels;
         ::cuda::device_buffer<float> patch_gradient;
         ::cuda::device_buffer<float> loss;
-        ::cuda::device_buffer<float> loss_sum;
+        ::cuda::device_buffer<float> sample_loss;
         ::cuda::device_buffer<std::uint64_t> device_step;
         ::cuda::device_buffer<std::uint64_t> device_processed_samples;
         ::cuda::device_buffer<std::uint64_t> device_seed;

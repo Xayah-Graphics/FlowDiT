@@ -8,15 +8,20 @@ namespace flowdit::editor {
         if (texture) renderer.retire(texture);
         specification = image;
         labels.assign(classes.begin(), classes.end());
-        const auto height = static_cast<std::uint32_t>(labels.size()) * specification.height;
-        texture = renderer.texture({specification.width, height});
-        renderer.upload(texture, pixels, specification.width, height, true);
+        columns = std::min(static_cast<std::uint32_t>(labels.size()), 10u);
+        rows = (static_cast<std::uint32_t>(labels.size()) + columns - 1) / columns;
+        const auto width = columns * image.width, height = rows * image.height;
+        std::vector<std::uint8_t> atlas(static_cast<std::size_t>(width) * height * 4uz);
+        for (std::size_t i = 0; i < labels.size(); ++i)
+            for (std::uint32_t y = 0; y < image.height; ++y) std::memcpy(atlas.data() + ((i / columns * image.height + y) * width + i % columns * image.width) * 4uz, pixels + (i * image.height + y) * image.width * 4uz, image.width * 4uz);
+        texture = renderer.texture({width, height});
+        renderer.upload(texture, atlas.data(), width, height, true);
     }
     void Canvas::draw(const Picture& picture) {
         const auto& image = picture.specification;
         const float image_width = static_cast<float>(image.width), image_height = static_cast<float>(image.height);
         const std::uint64_t texture = picture.texture | (1ull << 32);
-        const float count = static_cast<float>(picture.labels.size());
+        const float atlas_columns = static_cast<float>(picture.columns), atlas_rows = static_cast<float>(picture.rows);
         const float dpi = ImGui::GetStyle().FontScaleDpi;
         if (selected >= 0) {
             if (text_button("Back")) {
@@ -63,7 +68,7 @@ namespace flowdit::editor {
                         ImGui::PushID(index);
                         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{});
                         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0);
-                        if (ImGui::ImageButton("image", texture, {thumbnail, height}, {0, index / count}, {1, (index + 1) / count})) {
+                        if (ImGui::ImageButton("image", texture, {thumbnail, height}, {(index % picture.columns) / atlas_columns, (index / picture.columns) / atlas_rows}, {(index % picture.columns + 1) / atlas_columns, (index / picture.columns + 1) / atlas_rows})) {
                             scroll = ImGui::GetScrollY();
                             selected = index;
                             pan = {};
@@ -102,7 +107,7 @@ namespace flowdit::editor {
         }
         const float width = image_width * zoom, height = image_height * zoom;
         const ImVec2 position{origin.x + (available.x - width) * 0.5F + pan.x, origin.y + (available.y - height) * 0.5F + pan.y};
-        ImGui::GetWindowDrawList()->AddImage(texture, position, {position.x + width, position.y + height}, {0, selected / count}, {1, (selected + 1) / count});
+        ImGui::GetWindowDrawList()->AddImage(texture, position, {position.x + width, position.y + height}, {(selected % picture.columns) / atlas_columns, (selected / picture.columns) / atlas_rows}, {(selected % picture.columns + 1) / atlas_columns, (selected / picture.columns + 1) / atlas_rows});
         ImGui::EndChild();
     }
 } // namespace flowdit::editor

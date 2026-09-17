@@ -48,7 +48,6 @@ export namespace flowdit {
         std::size_t condition_gradient;
         std::size_t time_hidden_gradient;
         std::size_t time_preactivation_gradient;
-        std::size_t sample_loss;
         std::size_t transformer_workspace;
         neural::TransformerWorkspaceLayout transformer_layout;
         std::size_t byte_count;
@@ -66,7 +65,6 @@ export namespace flowdit {
         FlowDiT(::cuda::stream_ref stream, neural::MatmulRuntime& matmul, const ModelConfiguration& configuration);
         std::vector<float> initialize_parameters(std::uint64_t seed) const;
         void forward(const float* parameter_values, const float* patches, const float* times, const std::uint32_t* labels, std::uint8_t* workspace, const FlowDiTWorkspaceLayout& workspace_layout);
-        void loss(const float* target, float* loss, std::uint8_t* workspace, const FlowDiTWorkspaceLayout& workspace_layout);
         void backward(const float* parameter_values, float* parameter_gradients, const float* patches, const float* times, const std::uint32_t* labels, float* patch_gradient, std::uint8_t* workspace, const FlowDiTWorkspaceLayout& workspace_layout);
     };
 } // namespace flowdit

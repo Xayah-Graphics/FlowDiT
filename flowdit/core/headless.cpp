@@ -55,7 +55,7 @@ Ctrl+C stops at a complete step.)");
             std::println("Data root: {}", Catalog::directory.string());
             for (const auto& [name, dataset] : catalog.datasets) {
                 if (arguments.size() > 1 && name != arguments[1]) continue;
-                std::println("{} | {} | {}", name, dataset.name, !dataset.error.empty() ? dataset.error : dataset.kind ? std::format("{} images", dataset.count) : "Unsupported dataset format");
+                std::println("{} | {} | {}", name, dataset.info ? dataset.info->specification.name : name, !dataset.error.empty() ? dataset.error : dataset.info ? std::format("{} images", dataset.info->count) : "Unsupported dataset format");
                 for (const auto& [run_name, run] : dataset.runs) {
                     std::println("  {}{}", run_name, run.error.empty() ? "" : " | " + run.error);
                     for (const auto& checkpoint : run.checkpoints) std::println("    {} | step {}{}", checkpoint.path.filename().string(), checkpoint.step, checkpoint.error.empty() ? "" : " | " + checkpoint.error);
@@ -65,7 +65,7 @@ Ctrl+C stops at a complete step.)");
         }
         const auto& dataset = catalog.datasets.at(std::string{arguments[1]});
         if (!dataset.error.empty()) throw std::runtime_error{dataset.error};
-        if (!dataset.kind) throw std::runtime_error{"Unsupported dataset format: " + dataset.name};
+        if (!dataset.info) throw std::runtime_error{"Unsupported dataset format: " + dataset.directory.filename().string()};
         std::string run_name;
         for (std::size_t i = 2; i < arguments.size(); i += 2)
             if (arguments[i] == "--run") run_name = arguments[i + 1];
@@ -94,12 +94,12 @@ Ctrl+C stops at a complete step.)");
                 else if (option == "--learning-rate") config.optimizer.learning_rate = number<float>(value);
                 else throw std::runtime_error{"Unknown training option: " + std::string{option}};
             }
-            std::println("FlowDiT train | batch {} | target {} | {}", Trainer::batch, config.end_step, config.output.string());
+            std::println("FlowDiT train | batch {} | target {} | {}", config.batch, config.end_step, config.output.string());
             std::cout.flush();
-            request.dataset = std::make_shared<const Dataset>(load_dataset(config.dataset_type, config.dataset));
+            request.dataset = std::make_shared<const Dataset>(load_dataset(config.dataset));
             session.start(std::move(request));
         } else if (command == "sample") {
-            if (dataset.runs.empty()) throw std::runtime_error{"No training runs for " + dataset.name};
+            if (dataset.runs.empty()) throw std::runtime_error{"No training runs for " + dataset.info->specification.name};
             const auto& run = run_name.empty() ? dataset.runs.begin()->second : dataset.runs.at(run_name);
             if (!run.error.empty()) throw std::runtime_error{run.error};
             if (run.checkpoints.empty()) throw std::runtime_error{"No checkpoints in the selected run"};

@@ -14,7 +14,7 @@ namespace flowdit::editor {
         category = -1;
         page = 0;
         dirty = filter_dirty = false;
-        loading = std::async(std::launch::async, [path = entry.directory, type = *entry.kind] { return std::make_shared<const Dataset>(load_dataset(type, path)); });
+        loading = std::async(std::launch::async, [path = entry.directory] { return std::make_shared<const Dataset>(load_dataset(path)); });
         error.clear();
     }
     void DatasetPanel::receive(Renderer& renderer) {
@@ -42,20 +42,19 @@ namespace flowdit::editor {
         const auto count = std::min(24uz, indices.size() - begin);
         const auto& specification = dataset->specification;
         const std::size_t pixels = static_cast<std::size_t>(specification.width) * specification.height;
-        std::vector<std::uint32_t> labels(count);
+        ImageBatch batch;
+        dataset->read(std::span{indices}.subspan(begin, count), batch);
         std::vector<std::uint8_t> rgba(count * pixels * 4uz);
         for (std::size_t image = 0; image < count; ++image) {
-            const auto index = indices[begin + image];
-            labels[image] = dataset->labels[index];
             for (std::size_t pixel = 0; pixel < pixels; ++pixel) {
                 for (std::size_t channel = 0; channel < 3; ++channel) {
                     const std::size_t source_channel = specification.channels == 1u ? 0uz : channel;
-                    rgba[(image * pixels + pixel) * 4uz + channel] = dataset->images[index * pixels * specification.channels + source_channel * pixels + pixel];
+                    rgba[(image * pixels + pixel) * 4uz + channel] = batch.pixels[image * pixels * specification.channels + source_channel * pixels + pixel];
                 }
                 rgba[(image * pixels + pixel) * 4uz + 3uz] = 255;
             }
         }
-        picture.upload(renderer, specification, labels, rgba.data());
+        picture.upload(renderer, specification, batch.labels, rgba.data());
         dirty = false;
     }
     bool DatasetPanel::draw_browse() {
@@ -98,16 +97,16 @@ namespace flowdit::editor {
             ImGui::PushID(key.c_str());
             const auto origin = ImGui::GetCursorScreenPos();
             const float width = ImGui::GetContentRegionAvail().x;
-            const bool available = entry.kind.has_value() && entry.error.empty();
+            const bool available = entry.info.has_value() && entry.error.empty();
             ImGui::BeginDisabled(!available || ((busy || loading.valid()) && key != previous));
-            if (ImGui::Selectable(entry.name.c_str(), selected == key, ImGuiSelectableFlags_None, {0, ImGui::GetFrameHeight()})) {
+            if (ImGui::Selectable(entry.info ? entry.info->specification.name.c_str() : key.c_str(), selected == key, ImGuiSelectableFlags_None, {0, ImGui::GetFrameHeight()})) {
                 selected = key;
                 page = 0;
                 canvas = {};
                 dirty = previous == key;
                 show = true;
             }
-            const auto detail = !entry.error.empty() ? std::string{"Error"} : entry.kind ? std::format("{}", entry.count) : "Unsupported";
+            const auto detail = !entry.error.empty() ? std::string{"Error"} : entry.info ? std::format("{}", entry.info->count) : "Unsupported";
             const float text_width = ImGui::CalcTextSize(detail.c_str()).x;
             ImGui::GetWindowDrawList()->AddText({origin.x + width - text_width - 6 * dpi, origin.y + 4 * dpi}, ImGui::GetColorU32(ImGuiCol_TextDisabled), detail.c_str());
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s%s%s", key.c_str(), entry.error.empty() ? "" : "\n", entry.error.c_str());

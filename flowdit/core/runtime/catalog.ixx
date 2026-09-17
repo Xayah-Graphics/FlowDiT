@@ -6,6 +6,7 @@ export namespace flowdit {
     struct CheckpointEntry final {
         std::filesystem::path path;
         ModelConfiguration model;
+        ImageSpecification image;
         std::uint64_t step{}, seed{};
         double training_seconds{};
         std::string error;
@@ -17,9 +18,8 @@ export namespace flowdit {
     };
     struct DatasetEntry final {
         std::filesystem::path directory;
-        std::optional<DatasetKind> kind;
-        std::string name, error;
-        std::uint32_t count{};
+        std::optional<DatasetInfo> info;
+        std::string error;
         std::map<std::string, RunEntry, std::greater<>> runs;
     };
     struct Catalog final {

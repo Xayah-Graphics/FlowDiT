@@ -63,6 +63,7 @@ target_sources(flowdit_core PRIVATE
         flowdit/core/dataset/cifar10.cpp
         flowdit/core/dataset/load.cpp
         flowdit/core/dataset/mnist.cpp
+        flowdit/core/dataset/types.cpp
         flowdit/core/io/output.cpp
         flowdit/core/model/configuration.cpp
         flowdit/core/model/flowdit.cpp
@@ -72,11 +73,16 @@ target_sources(flowdit_core PRIVATE
         flowdit/core/neural/training-state.cu
         flowdit/core/neural/transformer.cpp
         flowdit/core/neural/transformer.cu
+        flowdit/core/representation/pixel.cpp
+        flowdit/core/representation/kernels.cu
         flowdit/core/runtime/session.cpp
         flowdit/core/runtime/catalog.cpp
         flowdit/core/sampling/runtime.cpp
+        flowdit/core/sampling/kernels.cu
         flowdit/core/sampling/sampler.cpp
         flowdit/core/serialization/safetensors.cpp
+        flowdit/core/training/configuration.cpp
+        flowdit/core/training/kernels.cu
         flowdit/core/training/trainer.cpp
         PUBLIC FILE_SET cxx_modules TYPE CXX_MODULES FILES
         flowdit/core/headless.ixx
@@ -84,18 +90,22 @@ target_sources(flowdit_core PRIVATE
         flowdit/core/dataset/load.ixx
         flowdit/core/dataset/mnist.ixx
         flowdit/core/dataset/types.ixx
+        flowdit/core/image/types.ixx
         flowdit/core/io/output.ixx
         flowdit/core/model/configuration.ixx
         flowdit/core/model/flowdit.ixx
         flowdit/core/neural/matmul.ixx
         flowdit/core/neural/training-state.ixx
         flowdit/core/neural/transformer.ixx
+        flowdit/core/representation/pixel.ixx
         flowdit/core/runtime/session.ixx
         flowdit/core/runtime/catalog.ixx
         flowdit/core/sampling/types.ixx
         flowdit/core/sampling/runtime.ixx
         flowdit/core/sampling/sampler.ixx
         flowdit/core/serialization/safetensors.ixx
+        flowdit/core/tensor/types.ixx
+        flowdit/core/training/configuration.ixx
         flowdit/core/training/trainer.ixx)
 target_include_directories(flowdit_core PUBLIC "${FLOWDIT_CLION_CUDA_INCLUDE_DIRECTORY}")
 target_compile_definitions(flowdit_core PRIVATE FLOWDIT_PROJECT_VERSION="${PROJECT_VERSION}"

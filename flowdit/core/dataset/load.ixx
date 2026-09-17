@@ -2,5 +2,6 @@ export module flowdit.dataset.load;
 export import flowdit.dataset.types;
 import std;
 export namespace flowdit {
-    Dataset load_dataset(DatasetKind kind, const std::filesystem::path& directory);
+    std::optional<DatasetInfo> inspect_dataset(const std::filesystem::path& directory);
+    Dataset load_dataset(const std::filesystem::path& directory);
 } // namespace flowdit

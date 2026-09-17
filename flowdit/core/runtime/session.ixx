@@ -30,11 +30,11 @@ export namespace flowdit {
     };
     struct FrameInfo final {
         SamplingRequest request;
-        ModelConfiguration model;
+        ImageSpecification image;
     };
     struct SessionObserver final {
         std::function<void()> notify;
-        std::function<void(const FrameInfo&, const std::uint8_t*, std::uint32_t, std::uint32_t, ::cuda::stream_ref)> image;
+        std::function<void(const FrameInfo&, const std::uint8_t*, ::cuda::stream_ref)> image;
     };
     struct SessionUpdate final {
         SessionStatus status;
@@ -59,9 +59,11 @@ export namespace flowdit {
         std::stop_source cancellation;
         std::unique_ptr<Sampler> sampler;
         std::filesystem::path sampler_checkpoint;
+        ImageSpecification sampler_image;
         std::jthread worker;
         void report(Stage stage);
-        SamplingObserver observe(const FrameInfo* info = nullptr);
+        SamplingObserver observe(PixelRepresentation* representation = nullptr, const FrameInfo* info = nullptr);
+        void publish_sample(const SamplingResult& result, PixelRepresentation& representation, ::cuda::stream_ref stream, SampleInfo info, bool preview);
         void run();
         void execute(const TrainRequest& request);
         void execute(const SampleRequest& request);

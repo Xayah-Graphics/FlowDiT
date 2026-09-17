@@ -36,8 +36,8 @@ namespace flowdit::editor {
             void draw_application();
             void draw();
         };
-        Workspace::Workspace(Renderer& source) : renderer{source}, interop{renderer.device, 0}, session{SessionObserver{.notify = [] { glfwPostEmptyEvent(); }, .image = [this](const FrameInfo& info, const std::uint8_t* pixels, const std::uint32_t width, const std::uint32_t height, const ::cuda::stream_ref stream) {
-            interop.publish(info, pixels, width, height, stream);
+        Workspace::Workspace(Renderer& source) : renderer{source}, interop{renderer.device, 0}, session{SessionObserver{.notify = [] { glfwPostEmptyEvent(); }, .image = [this](const FrameInfo& info, const std::uint8_t* pixels, const ::cuda::stream_ref stream) {
+            interop.publish(info, pixels, stream);
         }}} {
             try {
                 catalog.scan();
@@ -65,7 +65,7 @@ namespace flowdit::editor {
                     continue;
                 }
                 const auto texture = sampling.preview(renderer, frame.info);
-                renderer.copy(texture, slot.buffer, *slot.timeline, frame.ready);
+                renderer.copy(texture, slot.buffer, *slot.timeline, frame.ready, frame.info.image.width, frame.info.image.height, frame.info.request.count);
             }
             training.accept(renderer, update);
             sampling.accept(update);
@@ -198,7 +198,7 @@ namespace flowdit::editor {
                 ImGui::TextDisabled("DATASETS");
                 ImGui::PopFont();
                 ImGui::SetCursorPosY(content_y);
-                ImGui::TextUnformatted(selected.empty() ? "No dataset" : catalog.datasets.at(selected).name.c_str());
+                ImGui::TextUnformatted(selected.empty() ? "No dataset" : catalog.datasets.at(selected).info->specification.name.c_str());
                 if (!selected.empty()) {
                     const auto& entry = catalog.datasets.at(selected);
                     if (dataset.dataset) {

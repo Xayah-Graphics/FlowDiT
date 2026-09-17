@@ -139,7 +139,7 @@ namespace flowdit::editor {
         command.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, {}, {}, 1, &sampled});
         textures.at(id).initialized = true;
     }
-    void Renderer::copy(const std::uint64_t id, const graphics::Buffer& source, const vk::Semaphore semaphore, const std::uint64_t ready) {
+    void Renderer::copy(const std::uint64_t id, const graphics::Buffer& source, const vk::Semaphore semaphore, const std::uint64_t ready, const std::uint32_t width, const std::uint32_t height, const std::uint32_t count) {
         auto& target        = textures.at(id);
         const auto& command = commands[frame_index];
         waits.emplace_back(semaphore, ready, vk::PipelineStageFlagBits2::eCopy);
@@ -147,7 +147,11 @@ namespace flowdit::editor {
         const vk::BufferMemoryBarrier2 acquire{vk::PipelineStageFlagBits2::eNone, {}, vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead, vk::QueueFamilyExternal, device.family, *source.buffer, 0, source.size};
         const vk::ImageMemoryBarrier2 transfer{target.initialized ? vk::PipelineStageFlagBits2::eFragmentShader : vk::PipelineStageFlagBits2::eNone, target.initialized ? vk::AccessFlagBits2::eShaderSampledRead : vk::AccessFlags2{}, vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, target.initialized ? vk::ImageLayout::eShaderReadOnlyOptimal : vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *target.image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
         command.pipelineBarrier2(vk::DependencyInfo{{}, 0, nullptr, 1, &acquire, 1, &transfer});
-        command.copyBufferToImage(*source.buffer, *target.image.image, vk::ImageLayout::eTransferDstOptimal, vk::BufferImageCopy{0, 0, 0, {vk::ImageAspectFlagBits::eColor, 0, 0, 1}, {0, 0, 0}, {target.image.extent.width, target.image.extent.height, 1}});
+        const auto columns = target.image.extent.width / width;
+        std::vector<vk::BufferImageCopy> regions;
+        regions.reserve(count);
+        for (std::uint32_t i = 0; i < count; ++i) regions.emplace_back(static_cast<vk::DeviceSize>(i) * width * height * 4u, 0, 0, vk::ImageSubresourceLayers{vk::ImageAspectFlagBits::eColor, 0, 0, 1}, vk::Offset3D{static_cast<std::int32_t>(i % columns * width), static_cast<std::int32_t>(i / columns * height), 0}, vk::Extent3D{width, height, 1});
+        command.copyBufferToImage(*source.buffer, *target.image.image, vk::ImageLayout::eTransferDstOptimal, regions);
         const vk::BufferMemoryBarrier2 release{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferRead, vk::PipelineStageFlagBits2::eNone, {}, device.family, vk::QueueFamilyExternal, *source.buffer, 0, source.size};
         const vk::ImageMemoryBarrier2 sampled{vk::PipelineStageFlagBits2::eCopy, vk::AccessFlagBits2::eTransferWrite, vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal, vk::QueueFamilyIgnored, vk::QueueFamilyIgnored, *target.image.image, {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
         command.pipelineBarrier2(vk::DependencyInfo{{}, 0, nullptr, 1, &release, 1, &sampled});

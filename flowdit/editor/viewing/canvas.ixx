@@ -1,12 +1,13 @@
 module;
 #include <imgui.h>
 export module flowdit.editor.viewing.canvas;
-export import flowdit.dataset.types;
+export import flowdit.image.types;
 import flowdit.editor.graphics.renderer;
 import std;
 export namespace flowdit::editor {
     struct Picture final {
         std::uint64_t texture{};
+        std::uint32_t columns{}, rows{};
         ImageSpecification specification;
         std::vector<std::uint32_t> labels;
         void upload(Renderer& renderer, const ImageSpecification& image, std::span<const std::uint32_t> classes, const std::uint8_t* pixels);

@@ -1,17 +1,9 @@
 export module flowdit.io.output;
 export import flowdit.sampling.types;
-export import flowdit.neural.training_state;
+export import flowdit.training.configuration;
+export import flowdit.representation.pixel;
 import std;
 export namespace flowdit {
-    struct RunConfiguration final {
-        std::filesystem::path dataset, output;
-        DatasetKind dataset_type{DatasetKind::cifar10};
-        std::uint32_t patch_size{2u};
-        std::uint64_t end_step{400'000u}, seed{42u};
-        inline static constexpr std::uint32_t execution_steps{10u}, log_interval{100u}, preview_interval{1'000u}, save_interval{50'000u};
-        neural::TrainingConfiguration optimizer;
-        inline static constexpr SamplingRequest preview{};
-    };
     struct TrainingRecord final {
         std::uint64_t step{};
         float loss{};
@@ -24,11 +16,12 @@ export namespace flowdit {
         std::uint64_t training_step{};
         std::uint32_t nfe{};
         ModelConfiguration model;
+        ImageSpecification image;
         std::vector<std::uint32_t> labels;
     };
     struct SampleOutput final {
         SampleInfo info;
-        SamplingResult images;
+        std::vector<std::uint8_t> rgba;
     };
     struct RunHistory final {
         std::vector<TrainingRecord> metrics;
@@ -38,7 +31,6 @@ export namespace flowdit {
 export namespace flowdit::output {
     void write_configuration(const RunConfiguration& configuration);
     RunConfiguration read_configuration(const std::filesystem::path& directory);
-    void write_png(const std::filesystem::path& path, const SamplingResult& images);
     void write_sample(const SampleOutput& sample);
     SampleOutput read_sample(const std::filesystem::path& path);
     RunHistory read_history(const std::filesystem::path& directory);

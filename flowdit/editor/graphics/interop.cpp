@@ -22,7 +22,7 @@ namespace flowdit::editor {
     Interop::~Interop() {
         device.logical.waitIdle();
     }
-    void Interop::publish(const FrameInfo& info, const std::uint8_t* pixels, const std::uint32_t width, const std::uint32_t height, const ::cuda::stream_ref stream) {
+    void Interop::publish(const FrameInfo& info, const std::uint8_t* pixels, const ::cuda::stream_ref stream) {
         const auto index     = next_slot;
         next_slot            = (next_slot + 1) % slots.size();
         auto& slot           = slots[index];
@@ -32,7 +32,7 @@ namespace flowdit::editor {
             wait.params.fence.value = slot.value + 1;
             if (const auto result = cudaWaitExternalSemaphoresAsync(&semaphore, &wait, 1, stream.get()); result != cudaSuccess) throw std::runtime_error{cudaGetErrorString(result)};
         }
-        const std::size_t bytes = static_cast<std::size_t>(width) * height * 4uz;
+        const std::size_t bytes = static_cast<std::size_t>(info.image.width) * info.image.height * info.request.count * 4uz;
         if (slot.buffer.size != bytes) {
             stream.sync();
             slot.pixels.reset();

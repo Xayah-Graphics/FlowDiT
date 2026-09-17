@@ -8,16 +8,16 @@ export namespace flowdit {
     struct SamplingObserver final {
         std::stop_token stop;
         std::function<void(const SamplingProgress&)> progress;
-        std::function<void(const std::uint8_t*, std::uint32_t, std::uint32_t, ::cuda::stream_ref)> image;
+        std::function<void(const TensorBatch&, ::cuda::stream_ref)> tensor;
     };
     struct SamplingRuntime final {
-        SamplingRuntime(::cuda::stream_ref stream, FlowDiT& model);
+        SamplingRuntime(::cuda::stream_ref stream, FlowDiT& model, std::uint32_t batch);
         std::optional<SamplingResult> sample(const float* parameters, const SamplingRequest& request, const SamplingObserver& observer = {});
 
     private:
         SamplingRequest request;
         SamplingProgress progress;
-        inline static constexpr std::uint32_t batch = 100u;
+        std::uint32_t batch;
         std::size_t value_count;
         ::cuda::stream_ref stream;
         FlowDiT& model;
@@ -30,7 +30,7 @@ export namespace flowdit {
         ::cuda::device_buffer<float> conditional_velocity;
         ::cuda::device_buffer<float> unconditional_velocity;
         std::optional<::cuda::device_buffer<float>> stages;
-        ::cuda::device_buffer<std::uint8_t> image_rgba;
+        ::cuda::device_buffer<float> output;
         void initialize(const SamplingRequest& request);
         void advance(const float* parameters);
         void publish(const SamplingObserver& observer);
