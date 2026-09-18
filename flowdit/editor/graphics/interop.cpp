@@ -32,7 +32,7 @@ namespace flowdit::editor {
             wait.params.fence.value = slot.value + 1;
             if (const auto result = cudaWaitExternalSemaphoresAsync(&semaphore, &wait, 1, stream.get()); result != cudaSuccess) throw std::runtime_error{cudaGetErrorString(result)};
         }
-        const std::size_t bytes = static_cast<std::size_t>(info.image.width) * info.image.height * info.request.count * 4uz;
+        const std::size_t bytes = static_cast<std::size_t>(info.image.width) * info.image.height * static_cast<std::uint32_t>(info.labels.size()) * 4uz;
         if (slot.buffer.size != bytes) {
             stream.sync();
             slot.pixels.reset();

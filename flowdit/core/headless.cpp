@@ -33,11 +33,15 @@ namespace flowdit::headless {
   flowdit sample DATASET [--run RUN] [--checkpoint NAME] [options]
 
 Train options:
+  --stage autoencoder|flowdit
+  --autoencoder RUN  --autoencoder-checkpoint NAME
+  --batch N          --accumulation N
   --seed N           --learning-rate VALUE
 
 Sample options:
   --class all|N       --solver euler|heun|rk4
   --steps N           --guidance VALUE      --seed N
+  --count N
 
 DATASET is a directory name in the compiled data root. RUN and NAME come from list.
 New training creates a run; --run resumes its highest-step checkpoint.
@@ -57,7 +61,7 @@ Ctrl+C stops at a complete step.)");
                 if (arguments.size() > 1 && name != arguments[1]) continue;
                 std::println("{} | {} | {}", name, dataset.info ? dataset.info->specification.name : name, !dataset.error.empty() ? dataset.error : dataset.info ? std::format("{} images", dataset.info->count) : "Unsupported dataset format");
                 for (const auto& [run_name, run] : dataset.runs) {
-                    std::println("  {}{}", run_name, run.error.empty() ? "" : " | " + run.error);
+                    std::println("  {} | {}{}", run_name, run.configuration.stage == TrainingStage::autoencoder ? "Autoencoder" : "FlowDiT", run.error.empty() ? "" : " | " + run.error);
                     for (const auto& checkpoint : run.checkpoints) std::println("    {} | step {}{}", checkpoint.path.filename().string(), checkpoint.step, checkpoint.error.empty() ? "" : " | " + checkpoint.error);
                 }
             }
@@ -74,41 +78,67 @@ Ctrl+C stops at a complete step.)");
         Session session;
         if (command == "train") {
             TrainRequest request;
-            auto& config      = request.configuration;
-            config = catalog.training(dataset);
+            auto& config        = request.configuration;
+            TrainingStage stage = TrainingStage::autoencoder;
+            std::string autoencoder_run, autoencoder_name;
+            for (std::size_t i = 2; i < arguments.size(); i += 2) {
+                if (arguments[i] == "--stage") {
+                    if (arguments[i + 1] == "flowdit") stage = TrainingStage::flowdit;
+                    else if (arguments[i + 1] != "autoencoder") throw std::runtime_error{"Unknown training stage"};
+                }
+                if (arguments[i] == "--autoencoder") autoencoder_run = arguments[i + 1];
+                if (arguments[i] == "--autoencoder-checkpoint") autoencoder_name = arguments[i + 1];
+            }
+            config = catalog.training(dataset, stage);
+            if (!autoencoder_run.empty()) {
+                const auto& history = dataset.runs.at(autoencoder_run);
+                if (!history.error.empty()) throw std::runtime_error{history.error};
+                if (history.configuration.stage != TrainingStage::autoencoder) throw std::runtime_error{"Select an Autoencoder run"};
+                if (history.checkpoints.empty()) throw std::runtime_error{"No Autoencoder checkpoint"};
+                const auto selected = autoencoder_name.empty() ? history.checkpoints.begin() : std::ranges::find(history.checkpoints, autoencoder_name, [](const CheckpointEntry& e) { return e.path.filename().string(); });
+                if (selected == history.checkpoints.end()) throw std::runtime_error{"Unknown Autoencoder checkpoint"};
+                if (!selected->error.empty()) throw std::runtime_error{selected->error};
+                config.autoencoder_checkpoint = std::filesystem::relative(selected->path, dataset.directory);
+            }
             if (!run_name.empty()) {
                 const auto& run = dataset.runs.at(run_name);
                 if (!run.error.empty()) throw std::runtime_error{run.error};
                 if (run.checkpoints.empty()) throw std::runtime_error{"No checkpoint in run " + run_name};
                 const auto& checkpoint = run.checkpoints.front();
                 if (!checkpoint.error.empty()) throw std::runtime_error{checkpoint.error};
-                config = run.configuration;
+                config             = run.configuration;
                 request.checkpoint = checkpoint.path;
             }
             for (std::size_t index = 2; index < arguments.size(); ++index) {
                 const auto option = arguments[index];
                 const auto value  = arguments[++index];
-                if (option == "--run") continue;
-                if (option == "--steps") config.end_step = number<std::uint64_t>(value);
+                if (option == "--run" || option == "--stage" || option == "--autoencoder" || option == "--autoencoder-checkpoint") continue;
+                if (option == "--batch") config.batch = number<std::uint32_t>(value);
+                else if (option == "--accumulation") config.autoencoder.accumulation = number<std::uint32_t>(value);
+                else if (option == "--steps") config.end_step = number<std::uint64_t>(value);
                 else if (option == "--seed") config.seed = number<std::uint64_t>(value);
                 else if (option == "--learning-rate") config.optimizer.learning_rate = number<float>(value);
                 else throw std::runtime_error{"Unknown training option: " + std::string{option}};
             }
+            if (config.stage == TrainingStage::flowdit && config.autoencoder_checkpoint.empty()) throw std::runtime_error{"FlowDiT training requires --autoencoder RUN"};
             std::println("FlowDiT train | batch {} | target {} | {}", config.batch, config.end_step, config.output.string());
             std::cout.flush();
             request.dataset = std::make_shared<const Dataset>(load_dataset(config.dataset));
             session.start(std::move(request));
         } else if (command == "sample") {
             if (dataset.runs.empty()) throw std::runtime_error{"No training runs for " + dataset.info->specification.name};
-            const auto& run = run_name.empty() ? dataset.runs.begin()->second : dataset.runs.at(run_name);
+            const auto found = run_name.empty() ? std::ranges::find_if(dataset.runs, [](const auto& entry) { return entry.second.error.empty() && entry.second.configuration.stage == TrainingStage::flowdit; }) : dataset.runs.find(run_name);
+            if (found == dataset.runs.end()) throw std::runtime_error{"No FlowDiT run"};
+            const auto& run = found->second;
+            if (run.configuration.stage != TrainingStage::flowdit) throw std::runtime_error{"Sampling requires a FlowDiT checkpoint"};
             if (!run.error.empty()) throw std::runtime_error{run.error};
             if (run.checkpoints.empty()) throw std::runtime_error{"No checkpoints in the selected run"};
             SampleRequest request;
-            request.output = catalog.inference(run);
+            request.output                  = catalog.inference(run);
             const CheckpointEntry* selected = &run.checkpoints.front();
             for (std::size_t index = 2; index < arguments.size(); ++index) {
                 const auto option = arguments[index];
-                const auto value = arguments[++index];
+                const auto value  = arguments[++index];
                 if (option == "--run") continue;
                 if (option == "--checkpoint") {
                     const auto found = std::ranges::find(run.checkpoints, value, [](const CheckpointEntry& entry) { return entry.path.filename().string(); });
@@ -118,6 +148,7 @@ Ctrl+C stops at a complete step.)");
                     if (value != "all") request.sampling.class_index = number<std::uint32_t>(value);
                 } else if (option == "--solver") request.sampling.solver = solver(value);
                 else if (option == "--steps") request.sampling.step_count = number<std::uint32_t>(value);
+                else if (option == "--count") request.sampling.count = number<std::uint32_t>(value);
                 else if (option == "--guidance") request.sampling.guidance = number<float>(value);
                 else if (option == "--seed") request.sampling.seed = number<std::uint64_t>(value);
                 else throw std::runtime_error{"Unknown sampling option: " + std::string{option}};

@@ -10,10 +10,11 @@ namespace flowdit {
             for (auto& value : header) value = std::byteswap(value);
         return {{"MNIST", header[3], header[2], 1u, {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}}, header[1]};
     }
-    Dataset load_mnist(const std::filesystem::path& directory) {
-        const auto info = inspect_mnist(directory);
-        Dataset result{.specification = info.specification, .labels = std::vector<std::uint32_t>(info.count), .files = {directory / "train-images-idx3-ubyte"}, .records = std::vector<SampleRecord>(info.count)};
-        std::ifstream labels{directory / "train-labels-idx1-ubyte", std::ios::binary};
+    Dataset load_mnist(const std::filesystem::path& directory, const bool test) {
+        auto info = inspect_mnist(directory);
+        if (test) info.count = 10'000;
+        Dataset result{.specification = info.specification, .labels = std::vector<std::uint32_t>(info.count), .files = {directory / (test ? "t10k-images-idx3-ubyte" : "train-images-idx3-ubyte")}, .records = std::vector<SampleRecord>(info.count)};
+        std::ifstream labels{directory / (test ? "t10k-labels-idx1-ubyte" : "train-labels-idx1-ubyte"), std::ios::binary};
         labels.exceptions(std::ios::failbit | std::ios::badbit);
         labels.seekg(8);
         std::vector<std::uint8_t> bytes(info.count);

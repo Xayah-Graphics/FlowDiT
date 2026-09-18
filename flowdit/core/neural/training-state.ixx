@@ -29,7 +29,7 @@ export namespace flowdit::neural {
         ::cuda::device_buffer<float> second_moments;
         ::cuda::device_buffer<float> ema;
         ::cuda::device_buffer<float> step_scalars;
-        ParameterBuffer(::cuda::stream_ref stream, std::size_t count);
+        ParameterBuffer(::cuda::stream_ref stream, std::size_t count, bool average = true);
         void initialize(std::span<const float> values);
         void clear_gradients();
         void step(const TrainingConfiguration& configuration, const std::uint64_t* step, const std::uint64_t* processed_samples, std::uint32_t samples_per_step);

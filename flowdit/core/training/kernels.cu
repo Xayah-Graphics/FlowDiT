@@ -10,7 +10,7 @@ namespace flowdit::kernels {
         }
         __global__ void make_training_batch_kernel(const float* const data, const std::uint32_t* const input_labels, float* const path, float* const target, float* const times, std::uint32_t* const labels, const std::uint64_t* const step, const std::uint64_t* const seed, const std::uint32_t batch, const TensorLayout image, const std::uint32_t class_count) {
             const std::uint32_t sample_elements = image.width * image.height * image.channels;
-            const std::uint32_t patch_width         = image.patch_size * image.patch_size * image.channels;
+            const std::uint32_t patch_width     = image.patch_size * image.patch_size * image.channels;
             __shared__ float time;
             const std::uint32_t sample = blockIdx.x;
             if (threadIdx.x == 0u) {
@@ -37,7 +37,7 @@ namespace flowdit::kernels {
                     const std::uint32_t pixel         = patch_element / image.channels;
                     const std::uint32_t channel       = patch_element % image.channels;
                     const std::uint32_t y             = patch_y * image.patch_size + pixel / image.patch_size;
-                    const std::uint32_t x   = patch_x * image.patch_size + pixel % image.patch_size;
+                    const std::uint32_t x             = patch_x * image.patch_size + pixel % image.patch_size;
                     const std::size_t source          = static_cast<std::size_t>(sample) * sample_elements + static_cast<std::size_t>(channel) * image.width * image.height + y * image.width + x;
                     const float value                 = data[source];
                     const std::size_t destination     = static_cast<std::size_t>(sample) * sample_elements + patch_index;
@@ -80,7 +80,7 @@ namespace flowdit::kernels {
             ++*step;
             *processed_samples += samples_per_step;
         }
-    }
+    } // namespace
     void make_training_batch(const ::cuda::stream_ref stream, const float* const data, const std::uint32_t* const input_labels, float* const path, float* const target, float* const times, std::uint32_t* const labels, const std::uint64_t* const step, const std::uint64_t* const seed, const std::uint32_t batch, const TensorLayout image, const std::uint32_t class_count) {
         ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(batch), ::cuda::block_dims(thread_count))), make_training_batch_kernel, data, input_labels, path, target, times, labels, step, seed, batch, image, class_count);
     }

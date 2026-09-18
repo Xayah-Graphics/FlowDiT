@@ -48,6 +48,7 @@ endif ()
 # ============================================================================
 include(cmake/Dependencies.cmake)
 flowdit_require_dependency(cuda)
+flowdit_require_dependency(cudnn)
 flowdit_require_dependency(cccl)
 flowdit_require_dependency(threads)
 flowdit_require_dependency(nlohmann_json)
@@ -59,8 +60,13 @@ include(cmake/ClionCudaFacade.cmake)
 # ============================================================================
 add_library(flowdit_core STATIC)
 target_sources(flowdit_core PRIVATE
+        flowdit/core/autoencoder/configuration.cpp
+        flowdit/core/autoencoder/perceptual.cpp
+        flowdit/core/autoencoder/trainer.cpp
+        flowdit/core/autoencoder/model.cpp
         flowdit/core/headless.cpp
-        flowdit/core/dataset/cifar10.cpp
+        flowdit/core/dataset/cifar.cpp
+        flowdit/core/dataset/folder.cpp
         flowdit/core/dataset/load.cpp
         flowdit/core/dataset/mnist.cpp
         flowdit/core/dataset/types.cpp
@@ -68,25 +74,35 @@ target_sources(flowdit_core PRIVATE
         flowdit/core/model/configuration.cpp
         flowdit/core/model/flowdit.cpp
         flowdit/core/model/kernels.cu
+        flowdit/core/neural/spatial.cpp
+        flowdit/core/neural/spatial-kernels.cu
         flowdit/core/neural/matmul.cpp
         flowdit/core/neural/training-state.cpp
         flowdit/core/neural/training-state.cu
         flowdit/core/neural/transformer.cpp
         flowdit/core/neural/transformer.cu
-        flowdit/core/representation/pixel.cpp
-        flowdit/core/representation/kernels.cu
+        flowdit/core/image/transfer.cpp
+        flowdit/core/image/kernels.cu
+        flowdit/core/representation/latent.cpp
+        flowdit/core/representation/cache.cpp
         flowdit/core/runtime/session.cpp
         flowdit/core/runtime/catalog.cpp
         flowdit/core/sampling/runtime.cpp
         flowdit/core/sampling/kernels.cu
         flowdit/core/sampling/sampler.cpp
+        flowdit/core/serialization/digest.cpp
         flowdit/core/serialization/safetensors.cpp
         flowdit/core/training/configuration.cpp
         flowdit/core/training/kernels.cu
         flowdit/core/training/trainer.cpp
         PUBLIC FILE_SET cxx_modules TYPE CXX_MODULES FILES
+        flowdit/core/autoencoder/configuration.ixx
+        flowdit/core/autoencoder/perceptual.ixx
+        flowdit/core/autoencoder/trainer.ixx
+        flowdit/core/autoencoder/model.ixx
         flowdit/core/headless.ixx
-        flowdit/core/dataset/cifar10.ixx
+        flowdit/core/dataset/cifar.ixx
+        flowdit/core/dataset/folder.ixx
         flowdit/core/dataset/load.ixx
         flowdit/core/dataset/mnist.ixx
         flowdit/core/dataset/types.ixx
@@ -94,24 +110,29 @@ target_sources(flowdit_core PRIVATE
         flowdit/core/io/output.ixx
         flowdit/core/model/configuration.ixx
         flowdit/core/model/flowdit.ixx
+        flowdit/core/neural/spatial.ixx
         flowdit/core/neural/matmul.ixx
         flowdit/core/neural/training-state.ixx
         flowdit/core/neural/transformer.ixx
-        flowdit/core/representation/pixel.ixx
+        flowdit/core/image/transfer.ixx
+        flowdit/core/representation/latent.ixx
+        flowdit/core/representation/cache.ixx
         flowdit/core/runtime/session.ixx
         flowdit/core/runtime/catalog.ixx
         flowdit/core/sampling/types.ixx
         flowdit/core/sampling/runtime.ixx
         flowdit/core/sampling/sampler.ixx
+        flowdit/core/serialization/digest.ixx
         flowdit/core/serialization/safetensors.ixx
         flowdit/core/tensor/types.ixx
         flowdit/core/training/configuration.ixx
+        flowdit/core/training/state.ixx
         flowdit/core/training/trainer.ixx)
 target_include_directories(flowdit_core PUBLIC "${FLOWDIT_CLION_CUDA_INCLUDE_DIRECTORY}")
 target_compile_definitions(flowdit_core PRIVATE FLOWDIT_PROJECT_VERSION="${PROJECT_VERSION}"
         FLOWDIT_DATA_DIRECTORY="${PROJECT_SOURCE_DIR}/data")
 target_link_libraries(flowdit_core PUBLIC CCCL::libcudacxx CUDA::toolkit Threads::Threads
-        PRIVATE CUDA::cublas CUDA::cublasLt nlohmann_json::nlohmann_json flowdit::stb)
+        PRIVATE flowdit::cudnn CUDA::cublas CUDA::cublasLt nlohmann_json::nlohmann_json flowdit::stb)
 
 # ============================================================================
 # Editor

@@ -27,8 +27,6 @@ export namespace flowdit::neural {
     };
     struct MatmulRuntimeConfiguration final {
         std::size_t workspace_byte_count;
-        std::size_t tuning_byte_count;
-        std::size_t tuning_bias_byte_count;
     };
     struct MatmulRuntime final {
         struct PlanKey final {
@@ -60,9 +58,6 @@ export namespace flowdit::neural {
         const MatmulRuntimeConfiguration configuration;
         cublasLtHandle_t handle{};
         ::cuda::device_buffer<std::uint8_t> workspace;
-        ::cuda::device_buffer<std::uint8_t> tuning_output;
-        ::cuda::device_buffer<std::uint8_t> tuning_auxiliary;
-        ::cuda::device_buffer<std::uint8_t> tuning_bias;
         std::list<Plan> plans;
         MatmulRuntime(::cuda::stream_ref stream, MatmulRuntimeConfiguration configuration);
         ~MatmulRuntime() noexcept;

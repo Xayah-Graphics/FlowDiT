@@ -130,8 +130,7 @@ namespace flowdit::kernels {
             const std::uint32_t x            = pixel % image.width;
             const std::uint32_t token        = (y / image.patch_size) * (image.width / image.patch_size) + x / image.patch_size;
             const std::uint32_t patch_pixel  = (y % image.patch_size) * image.patch_size + x % image.patch_size;
-            for (std::uint32_t channel = 0u; channel < image.channels; ++channel)
-                values[(sample * image.channels + channel) * image_pixels + pixel] = patches[sample * image_pixels * image.channels + token * patch_width + patch_pixel * image.channels + channel];
+            for (std::uint32_t channel = 0u; channel < image.channels; ++channel) values[(sample * image.channels + channel) * image_pixels + pixel] = patches[sample * image_pixels * image.channels + token * patch_width + patch_pixel * image.channels + channel];
         }
     } // namespace
     void make_time_embedding(const ::cuda::stream_ref stream, const float* const times, float* const embedding, const std::uint32_t batch, const std::uint32_t width) {

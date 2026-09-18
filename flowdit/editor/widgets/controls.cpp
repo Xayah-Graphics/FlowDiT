@@ -5,8 +5,8 @@ module flowdit.editor.widgets.controls;
 import std;
 namespace flowdit::editor {
     bool text_button(const char* label) {
-        const float dpi = ImGui::GetStyle().FontScaleDpi;
-        const auto text = ImGui::CalcTextSize(label, nullptr, true);
+        const float dpi   = ImGui::GetStyle().FontScaleDpi;
+        const auto text   = ImGui::CalcTextSize(label, nullptr, true);
         const auto origin = ImGui::GetCursorScreenPos();
         const ImVec2 size{text.x + 24 * dpi, 40 * dpi};
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{12 * dpi, (size.y - text.y) * 0.5F});
@@ -14,14 +14,14 @@ namespace flowdit::editor {
         const bool pressed = ImGui::InvisibleButton(label, size);
         ImGui::PopStyleVar();
         const bool disabled = ImGui::GetItemFlags() & ImGuiItemFlags_Disabled;
-        auto* storage = ImGui::GetStateStorage();
-        const auto key = ImGui::GetItemID();
-        const float alpha = disabled ? 0 : std::lerp(storage->GetFloat(key), ImGui::IsItemHovered() ? 1.0F : 0.0F, std::min(ImGui::GetIO().DeltaTime, 1.0F / 60) / 0.12F);
+        auto* storage       = ImGui::GetStateStorage();
+        const auto key      = ImGui::GetItemID();
+        const float alpha   = disabled ? 0 : std::lerp(storage->GetFloat(key), ImGui::IsItemHovered() ? 1.0F : 0.0F, std::min(ImGui::GetIO().DeltaTime, 1.0F / 60) / 0.12F);
         storage->SetFloat(key, alpha);
         const ImVec2 position{origin.x + 12 * dpi, origin.y + (size.y - text.y) * 0.5F};
         const ImVec4 ink = disabled ? ImVec4{0.62F, 0.62F, 0.62F, 1} : ImVec4{0.57F + 0.31F * alpha, 0.58F + 0.30F * alpha, 0.64F + 0.29F * alpha, 1};
-        auto* draw = ImGui::GetWindowDrawList();
-        const char* end = ImGui::FindRenderedTextEnd(label);
+        auto* draw       = ImGui::GetWindowDrawList();
+        const char* end  = ImGui::FindRenderedTextEnd(label);
         ImGui::PushStyleColor(ImGuiCol_Text, {0, 0, 0, 0.7F});
         ImGui::RenderTextEllipsis(draw, {position.x, position.y + dpi}, {position.x + text.x, position.y + text.y + dpi}, position.x + text.x, label, end, nullptr);
         ImGui::PopStyleColor();
@@ -59,5 +59,11 @@ namespace flowdit::editor {
     }
     std::string run_label(const std::string_view name) {
         return std::format("{}-{} · {}:{}", name.substr(4, 2), name.substr(6, 2), name.substr(9, 2), name.substr(11, 2));
+    }
+    std::string checkpoint_label(const std::filesystem::path& path) {
+        const auto name = path.stem().string();
+        std::uint64_t step{};
+        std::from_chars(name.data() + 5, name.data() + name.size(), step);
+        return std::format("{} · Step {}", run_label(path.parent_path().parent_path().filename().string()), step);
     }
 } // namespace flowdit::editor

@@ -1,17 +1,20 @@
 export module flowdit.io.output;
 export import flowdit.sampling.types;
 export import flowdit.training.configuration;
-export import flowdit.representation.pixel;
+export import flowdit.image.transfer;
+export import flowdit.representation.latent;
 import std;
 export namespace flowdit {
     struct TrainingRecord final {
         std::uint64_t step{};
         float loss{};
         double samples_per_second{}, training_seconds{};
+        std::array<float, 4> components{};
     };
     struct SampleInfo final {
         std::filesystem::path path, checkpoint;
         SamplingRequest request;
+        bool reconstruction{};
         ParameterSource source{ParameterSource::exponential_average};
         std::uint64_t training_step{};
         std::uint32_t nfe{};

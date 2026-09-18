@@ -88,7 +88,7 @@ namespace flowdit::neural {
         if (a_layout != nullptr) cublasLtMatrixLayoutDestroy(a_layout);
         if (operation != nullptr) cublasLtMatmulDescDestroy(operation);
     }
-    MatmulRuntime::MatmulRuntime(const ::cuda::stream_ref source_stream, const MatmulRuntimeConfiguration source_configuration) : stream{source_stream}, configuration{source_configuration}, workspace{stream, ::cuda::device_default_memory_pool(stream.device()), configuration.workspace_byte_count, ::cuda::no_init}, tuning_output{stream, ::cuda::device_default_memory_pool(stream.device()), configuration.tuning_byte_count, ::cuda::no_init}, tuning_auxiliary{stream, ::cuda::device_default_memory_pool(stream.device()), configuration.tuning_byte_count, ::cuda::no_init}, tuning_bias{stream, ::cuda::device_default_memory_pool(stream.device()), configuration.tuning_bias_byte_count, ::cuda::no_init} {
+    MatmulRuntime::MatmulRuntime(const ::cuda::stream_ref source_stream, const MatmulRuntimeConfiguration source_configuration) : stream{source_stream}, configuration{source_configuration}, workspace{stream, ::cuda::device_default_memory_pool(stream.device()), configuration.workspace_byte_count, ::cuda::no_init} {
         if (const cublasStatus_t status = cublasLtCreate(&handle); status != CUBLAS_STATUS_SUCCESS) throw std::runtime_error{std::format("cuBLASLt handle: {}", cublasGetStatusString(status))};
     }
     MatmulRuntime::~MatmulRuntime() noexcept {
@@ -107,8 +107,12 @@ namespace flowdit::neural {
         auto plan = std::ranges::find(plans, key, &Plan::key);
         if (plan == plans.end()) plan = plans.emplace(plans.end(), handle, key, request.bias, request.auxiliary, configuration.workspace_byte_count, stream.device().attribute(::cuda::device_attributes::multiprocessor_count));
         if (!plan->tuned) {
-            const void* const tuning_bias_pointer      = tuning_bias.data();
-            const void* const tuning_auxiliary_pointer = tuning_auxiliary.data();
+            const std::size_t elements = static_cast<std::size_t>(key.rows) * key.columns;
+            ::cuda::device_buffer<float> tuning_output{stream, ::cuda::device_default_memory_pool(stream.device()), elements, ::cuda::no_init};
+            ::cuda::device_buffer<float> tuning_auxiliary{stream, ::cuda::device_default_memory_pool(stream.device()), key.epilogue == MatmulEpilogue::gelu_aux_bias ? elements : 0uz, ::cuda::no_init};
+            ::cuda::device_buffer<float> tuning_bias{stream, ::cuda::device_default_memory_pool(stream.device()), key.epilogue == MatmulEpilogue::bias_gradient ? key.columns : 0u, ::cuda::no_init};
+            const void* const tuning_bias_pointer      = key.epilogue == MatmulEpilogue::bias_gradient ? tuning_bias.data() : request.bias;
+            const void* const tuning_auxiliary_pointer = key.epilogue == MatmulEpilogue::gelu_aux_bias ? tuning_auxiliary.data() : request.auxiliary;
             if (uses_bias(key.epilogue))
                 if (const cublasStatus_t status = cublasLtMatmulDescSetAttribute(plan->operation, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &tuning_bias_pointer, sizeof(tuning_bias_pointer)); status != CUBLAS_STATUS_SUCCESS) throw std::runtime_error{std::format("cuBLASLt tuning bias pointer: {}", cublasGetStatusString(status))};
             if (uses_auxiliary(key.epilogue))

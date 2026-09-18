@@ -1,9 +1,9 @@
 module;
 #include <Windows.h>
-#include <windowsx.h>
-#include <dwmapi.h>
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
+#include <dwmapi.h>
+#include <windowsx.h>
 module flowdit.editor.platform.window;
 import std;
 namespace flowdit::editor {
@@ -62,41 +62,43 @@ namespace flowdit::editor {
         case WM_NCCALCSIZE:
             if (wparam) return 0;
             break;
-        case WM_NCHITTEST: {
-            if (platform.fullscreen) return HTCLIENT;
-            POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-            ScreenToClient(window, &point);
-            RECT client{};
-            GetClientRect(window, &client);
-            if (!IsZoomed(window)) {
-                const auto dpi = GetDpiForWindow(window);
-                const int border = GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
-                const bool left = point.x < border, right = point.x >= client.right - border;
-                const bool top = point.y < border, bottom = point.y >= client.bottom - border;
-                if (top && left) return HTTOPLEFT;
-                if (top && right) return HTTOPRIGHT;
-                if (bottom && left) return HTBOTTOMLEFT;
-                if (bottom && right) return HTBOTTOMRIGHT;
-                if (left) return HTLEFT;
-                if (right) return HTRIGHT;
-                if (top) return HTTOP;
-                if (bottom) return HTBOTTOM;
+        case WM_NCHITTEST:
+            {
+                if (platform.fullscreen) return HTCLIENT;
+                POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+                ScreenToClient(window, &point);
+                RECT client{};
+                GetClientRect(window, &client);
+                if (!IsZoomed(window)) {
+                    const auto dpi   = GetDpiForWindow(window);
+                    const int border = GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+                    const bool left = point.x < border, right = point.x >= client.right - border;
+                    const bool top = point.y < border, bottom = point.y >= client.bottom - border;
+                    if (top && left) return HTTOPLEFT;
+                    if (top && right) return HTTOPRIGHT;
+                    if (bottom && left) return HTBOTTOMLEFT;
+                    if (bottom && right) return HTBOTTOMRIGHT;
+                    if (left) return HTLEFT;
+                    if (right) return HTRIGHT;
+                    if (top) return HTTOP;
+                    if (bottom) return HTBOTTOM;
+                }
+                const auto& region = platform.drag_region;
+                if (point.x >= region[0] && point.y >= region[1] && point.x < region[2] && point.y < region[3]) return HTCAPTION;
+                return HTCLIENT;
             }
-            const auto& region = platform.drag_region;
-            if (point.x >= region[0] && point.y >= region[1] && point.x < region[2] && point.y < region[3]) return HTCAPTION;
-            return HTCLIENT;
-        }
-        case WM_GETMINMAXINFO: {
-            MONITORINFO monitor{sizeof(MONITORINFO)};
-            GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor);
-            auto& limits = *reinterpret_cast<MINMAXINFO*>(lparam);
-            const auto& area = platform.fullscreen ? monitor.rcMonitor : monitor.rcWork;
-            limits.ptMaxPosition = {area.left - monitor.rcMonitor.left, area.top - monitor.rcMonitor.top};
-            limits.ptMaxSize = {area.right - area.left, area.bottom - area.top};
-            const auto dpi = GetDpiForWindow(window);
-            limits.ptMinTrackSize = {MulDiv(960, dpi, 96), MulDiv(640, dpi, 96)};
-            return 0;
-        }
+        case WM_GETMINMAXINFO:
+            {
+                MONITORINFO monitor{sizeof(MONITORINFO)};
+                GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor);
+                auto& limits          = *reinterpret_cast<MINMAXINFO*>(lparam);
+                const auto& area      = platform.fullscreen ? monitor.rcMonitor : monitor.rcWork;
+                limits.ptMaxPosition  = {area.left - monitor.rcMonitor.left, area.top - monitor.rcMonitor.top};
+                limits.ptMaxSize      = {area.right - area.left, area.bottom - area.top};
+                const auto dpi        = GetDpiForWindow(window);
+                limits.ptMinTrackSize = {MulDiv(960, dpi, 96), MulDiv(640, dpi, 96)};
+                return 0;
+            }
         case WM_SYSCOMMAND:
             if (platform.fullscreen && ((wparam & 0xFFF0) == SC_MOVE || (wparam & 0xFFF0) == SC_SIZE || (wparam & 0xFFF0) == SC_MAXIMIZE)) return 0;
             break;

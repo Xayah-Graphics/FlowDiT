@@ -7,9 +7,7 @@ import flowdit.neural.matmul;
 import flowdit.neural.transformer;
 export namespace flowdit {
     inline constexpr neural::MatmulRuntimeConfiguration flow_matmul_runtime_configuration{
-        .workspace_byte_count   = 64uz * 1024uz * 1024uz,
-        .tuning_byte_count      = 256uz * 1024uz * 1024uz,
-        .tuning_bias_byte_count = 64uz * 1024uz,
+        .workspace_byte_count = 64uz * 1024uz * 1024uz,
     };
     struct FlowDiTParameterLayout final {
         std::size_t patch_weight;

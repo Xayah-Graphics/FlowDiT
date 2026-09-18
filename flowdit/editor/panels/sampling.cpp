@@ -14,26 +14,29 @@ namespace flowdit::editor {
         }
     }
     std::uint64_t SamplingPanel::preview(Renderer& renderer, const FrameInfo& info) {
-        if (!picture.texture || picture.specification.width != info.image.width || picture.specification.height != info.image.height || picture.labels.size() != info.request.count) {
+        if (!picture.texture || picture.specification.width != info.image.width || picture.specification.height != info.image.height || picture.labels.size() != static_cast<std::uint32_t>(info.labels.size())) {
             if (picture.texture) renderer.retire(picture.texture);
-            picture.columns = std::min(info.request.count, 10u);
-            picture.rows = (info.request.count + picture.columns - 1) / picture.columns;
+            picture.columns = std::min(static_cast<std::uint32_t>(info.labels.size()), 10u);
+            picture.rows    = (static_cast<std::uint32_t>(info.labels.size()) + picture.columns - 1) / picture.columns;
             picture.texture = renderer.texture({picture.columns * info.image.width, picture.rows * info.image.height});
         }
         picture.specification = info.image;
-        picture.labels.resize(info.request.count);
-        for (std::uint32_t i = 0; i < info.request.count; ++i) picture.labels[i] = info.request.class_index.value_or(i % static_cast<std::uint32_t>(info.image.classes.size()));
+        picture.labels        = info.labels;
         return picture.texture;
     }
     void SamplingPanel::select(const DatasetEntry& dataset, std::string name, const std::size_t index) {
-        run = std::move(name);
+        run        = std::move(name);
         checkpoint = {};
-        category = -1;
+        category   = -1;
         error.clear();
         if (dataset.runs.empty()) return;
-        if (run.empty()) run = dataset.runs.begin()->first;
+        if (run.empty()) {
+            const auto found = std::ranges::find_if(dataset.runs, [](const auto& value) { return value.second.error.empty() && value.second.configuration.stage == TrainingStage::flowdit; });
+            if (found == dataset.runs.end()) return;
+            run = found->first;
+        }
         const auto& entry = dataset.runs.at(run);
-        error = entry.error;
+        error             = entry.error;
         if (entry.checkpoints.empty()) return;
         checkpoint = entry.checkpoints.at(index);
         if (!checkpoint.error.empty()) error = checkpoint.error;
@@ -48,6 +51,7 @@ namespace flowdit::editor {
         const auto label = checkpoint.path.empty() ? std::string{"No checkpoint"} : run_label(run);
         if (ImGui::BeginCombo("##checkpoint", label.c_str())) {
             for (const auto& [name, entry] : dataset.runs) {
+                if (entry.configuration.stage != TrainingStage::flowdit) continue;
                 ImGui::PushID(name.c_str());
                 ImGui::TextDisabled("%s", run_label(name).c_str());
                 if (!entry.error.empty()) ImGui::TextWrapped("%s", entry.error.c_str());
@@ -66,6 +70,9 @@ namespace flowdit::editor {
         if (!checkpoint.path.empty()) {
             ImGui::TextDisabled("Step %llu · EMA", checkpoint.step);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", checkpoint.path.string().c_str());
+            ImGui::TextDisabled("Autoencoder");
+            ImGui::SameLine();
+            ImGui::TextUnformatted(checkpoint_label(dataset.runs.at(run).configuration.autoencoder_checkpoint).c_str());
         }
         ImGui::Spacing();
         ImGui::BeginDisabled(checkpoint.path.empty() || !error.empty());
@@ -101,15 +108,15 @@ namespace flowdit::editor {
             ImGui::BeginDisabled(status.busy || checkpoint.path.empty() || !error.empty());
             if (ImGui::Button("Generate", {-1, 0})) {
                 if (picture.texture) renderer.retire(picture.texture);
-                picture = {};
-                canvas = {};
-                stopping = false;
-                attached = true;
+                picture             = {};
+                canvas              = {};
+                stopping            = false;
+                attached            = true;
                 request.class_index = category < 0 ? std::nullopt : std::optional<std::uint32_t>{static_cast<std::uint32_t>(category)};
-                const auto path = catalog.inference(dataset.runs.at(run));
-                result = {.path = path, .checkpoint = checkpoint.path, .request = request, .model = checkpoint.model, .image = image};
+                const auto path     = catalog.inference(dataset.runs.at(run));
+                result              = {.path = path, .checkpoint = checkpoint.path, .request = request, .model = checkpoint.model, .image = image};
                 session.start(SampleRequest{.checkpoint = checkpoint.path, .output = path, .sampling = request});
-                status = {.mode = Mode::sampling, .stage = Stage::loading, .busy = true, .started = std::chrono::steady_clock::now()};
+                status   = {.mode = Mode::sampling, .stage = Stage::loading, .busy = true, .started = std::chrono::steady_clock::now()};
                 progress = status;
                 error.clear();
                 show = true;

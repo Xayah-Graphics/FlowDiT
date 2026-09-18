@@ -6,13 +6,8 @@ import std;
 import flowdit.model;
 import flowdit.neural.matmul;
 export import flowdit.neural.training_state;
+export import flowdit.training.state;
 export namespace flowdit {
-    struct TrainingState final {
-        std::uint64_t step{};
-        std::uint64_t processed_samples{};
-        std::uint64_t seed{};
-        double elapsed_seconds{};
-    };
     struct Trainer final {
         std::uint32_t batch;
         TrainingState state;
@@ -32,9 +27,11 @@ export namespace flowdit {
         ::cuda::device_buffer<float> input_values;
         ::cuda::device_buffer<std::uint32_t> input_labels;
         neural::MatmulRuntime matmul;
+
     public:
         FlowDiT model;
         neural::ParameterBuffer parameter_buffer;
+
     private:
         neural::TrainingConfiguration training_configuration;
         FlowDiTWorkspaceLayout model_workspace_layout;

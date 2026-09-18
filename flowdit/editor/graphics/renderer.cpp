@@ -1,9 +1,9 @@
 module;
 #include <Windows.h>
-#include <imm.h>
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
+#include <imm.h>
 module flowdit.editor.graphics.renderer;
 import flowdit.editor.platform.window;
 import flowdit.editor.graphics.device;
@@ -42,7 +42,7 @@ namespace flowdit::editor {
         if (!ImGui_ImplGlfw_InitForVulkan(window.window, true)) throw std::runtime_error{"Cannot initialize ImGui input"};
         // Keep the IME from consuming shortcuts outside text editing.
         ImmAssociateContextEx(window.native_window, nullptr, 0);
-        static const auto position_ime = ImGui::GetPlatformIO().Platform_SetImeDataFn;
+        static const auto position_ime               = ImGui::GetPlatformIO().Platform_SetImeDataFn;
         ImGui::GetPlatformIO().Platform_SetImeDataFn = [](ImGuiContext* context, ImGuiViewport* viewport, ImGuiPlatformImeData* data) {
             ImmAssociateContextEx(static_cast<HWND>(viewport->PlatformHandleRaw), nullptr, data->WantTextInput ? IACE_DEFAULT : 0);
             position_ime(context, viewport, data);

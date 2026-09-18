@@ -8,8 +8,8 @@ namespace flowdit::editor {
         if (texture) renderer.retire(texture);
         specification = image;
         labels.assign(classes.begin(), classes.end());
-        columns = std::min(static_cast<std::uint32_t>(labels.size()), 10u);
-        rows = (static_cast<std::uint32_t>(labels.size()) + columns - 1) / columns;
+        columns          = std::min(static_cast<std::uint32_t>(labels.size()), 10u);
+        rows             = (static_cast<std::uint32_t>(labels.size()) + columns - 1) / columns;
         const auto width = columns * image.width, height = rows * image.height;
         std::vector<std::uint8_t> atlas(static_cast<std::size_t>(width) * height * 4uz);
         for (std::size_t i = 0; i < labels.size(); ++i)
@@ -18,23 +18,23 @@ namespace flowdit::editor {
         renderer.upload(texture, atlas.data(), width, height, true);
     }
     void Canvas::draw(const Picture& picture) {
-        const auto& image = picture.specification;
+        const auto& image       = picture.specification;
         const float image_width = static_cast<float>(image.width), image_height = static_cast<float>(image.height);
         const std::uint64_t texture = picture.texture | (1ull << 32);
         const float atlas_columns = static_cast<float>(picture.columns), atlas_rows = static_cast<float>(picture.rows);
         const float dpi = ImGui::GetStyle().FontScaleDpi;
         if (selected >= 0) {
-            if (text_button("Back")) {
-                selected = -1;
+            if (text_button("Back") || (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
+                selected       = -1;
                 restore_scroll = true;
             }
             ImGui::SameLine();
             if (text_button("Fit")) fit = true;
             ImGui::SameLine();
             if (text_button("1:1")) {
-                fit = false;
+                fit  = false;
                 zoom = 1;
-                pan = {};
+                pan  = {};
             }
             if (selected >= 0) {
                 ImGui::SameLine();
@@ -45,16 +45,16 @@ namespace flowdit::editor {
             if (restore_scroll) ImGui::SetNextWindowScroll({0, scroll});
             restore_scroll = false;
             ImGui::BeginChild("grid");
-            const auto available = ImGui::GetContentRegionAvail();
-            const bool preview = picture.labels.size() > 24;
-            const float gap = (preview ? 8 : 16) * dpi;
-            const int columns = preview ? 10 : std::min(6, static_cast<int>(picture.labels.size()));
-            const int rows = (static_cast<int>(picture.labels.size()) + columns - 1) / columns;
-            const float thumbnail = std::min({112 * dpi, (available.x - (columns - 1) * gap) / columns, std::max(32 * dpi, (available.y - (rows - 1) * gap) / rows) * image_width / image_height});
-            const float height = thumbnail * image_height / image_width;
+            const auto available   = ImGui::GetContentRegionAvail();
+            const bool preview     = picture.labels.size() > 24;
+            const float gap        = (preview ? 8 : 16) * dpi;
+            const int columns      = preview ? 10 : std::min(6, static_cast<int>(picture.labels.size()));
+            const int rows         = (static_cast<int>(picture.labels.size()) + columns - 1) / columns;
+            const float thumbnail  = std::min({112 * dpi, (available.x - (columns - 1) * gap) / columns, std::max(32 * dpi, (available.y - (rows - 1) * gap) / rows) * image_width / image_height});
+            const float height     = thumbnail * image_height / image_width;
             const float row_height = height + gap;
-            const float left = ImGui::GetCursorPosX() + std::max(0.0F, (available.x - columns * thumbnail - (columns - 1) * gap) * 0.5F);
-            const float top = ImGui::GetCursorPosY() + std::max(0.0F, (available.y - rows * row_height + gap) * 0.5F);
+            const float left       = ImGui::GetCursorPosX() + std::max(0.0F, (available.x - columns * thumbnail - (columns - 1) * gap) * 0.5F);
+            const float top        = ImGui::GetCursorPosY() + std::max(0.0F, (available.y - rows * row_height + gap) * 0.5F);
             ImGui::SetCursorPosY(top);
             ImGuiListClipper clipper;
             clipper.Begin(rows, row_height);
@@ -69,10 +69,10 @@ namespace flowdit::editor {
                         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2{});
                         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0);
                         if (ImGui::ImageButton("image", texture, {thumbnail, height}, {(index % picture.columns) / atlas_columns, (index / picture.columns) / atlas_rows}, {(index % picture.columns + 1) / atlas_columns, (index / picture.columns + 1) / atlas_rows})) {
-                            scroll = ImGui::GetScrollY();
+                            scroll   = ImGui::GetScrollY();
                             selected = index;
-                            pan = {};
-                            fit = true;
+                            pan      = {};
+                            fit      = true;
                         }
                         ImGui::PopStyleVar(2);
                         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s / %u × %u", image.classes[picture.labels[index]].c_str(), image.width, image.height);
@@ -86,16 +86,16 @@ namespace flowdit::editor {
         }
         ImGui::BeginChild("image-view", {}, ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         const auto available = ImGui::GetContentRegionAvail();
-        const auto origin = ImGui::GetCursorScreenPos();
+        const auto origin    = ImGui::GetCursorScreenPos();
         ImGui::InvisibleButton("image-interaction", available, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
         if (fit) {
             zoom = std::min(available.x / image_width, available.y / image_height);
-            pan = {};
+            pan  = {};
         }
         const auto& io = ImGui::GetIO();
         if (ImGui::IsItemHovered() && io.MouseWheel != 0) {
             const float previous = zoom;
-            zoom = std::clamp(zoom * std::exp2(io.MouseWheel * 0.5F), 0.25F, 128.0F);
+            zoom                 = std::clamp(zoom * std::exp2(io.MouseWheel * 0.5F), 0.25F, 128.0F);
             const ImVec2 center{origin.x + available.x * 0.5F, origin.y + available.y * 0.5F};
             pan = {io.MousePos.x - center.x - (io.MousePos.x - center.x - pan.x) * zoom / previous, io.MousePos.y - center.y - (io.MousePos.y - center.y - pan.y) * zoom / previous};
             fit = false;

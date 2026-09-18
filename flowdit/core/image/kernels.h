@@ -1,5 +1,5 @@
-#ifndef FLOWDIT_REPRESENTATION_KERNELS_H
-#define FLOWDIT_REPRESENTATION_KERNELS_H
+#ifndef FLOWDIT_IMAGE_KERNELS_H
+#define FLOWDIT_IMAGE_KERNELS_H
 #include <cstdint>
 #include <flowdit/cuda_stream.h>
 namespace flowdit::kernels {

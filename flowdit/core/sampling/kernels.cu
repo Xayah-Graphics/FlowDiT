@@ -1,16 +1,16 @@
 #include "kernels.h"
 #include <cmath>
-#include <flowdit/cuda.h>
 #include <cuda/launch>
 #include <curand_kernel.h>
+#include <flowdit/cuda.h>
 namespace flowdit::kernels {
     namespace {
         constexpr std::uint32_t thread_count = 256u;
-        __global__ void make_sampling_noise_kernel(float* const state, const std::uint64_t seed, const std::uint32_t sample_elements) {
+        __global__ void make_sampling_noise_kernel(float* const state, const std::uint64_t seed, const std::uint32_t sample_elements, const std::uint32_t first_sample) {
             const std::uint32_t sample = blockIdx.x;
             for (std::uint32_t group = threadIdx.x; group < (sample_elements + 3u) / 4u; group += blockDim.x) {
                 curandStatePhilox4_32_10_t random{};
-                curand_init(seed, static_cast<std::uint64_t>(sample) * 8u + 4u, static_cast<unsigned long long>(group) * 4ull, &random);
+                curand_init(seed, static_cast<std::uint64_t>(sample + first_sample) * 8u + 4u, static_cast<unsigned long long>(group) * 4ull, &random);
                 const float4 noise      = curand_normal4(&random);
                 const std::size_t index = static_cast<std::size_t>(sample) * sample_elements + group * 4u;
                 const float gaussian[4]{noise.x, noise.y, noise.z, noise.w};
@@ -21,9 +21,9 @@ namespace flowdit::kernels {
             const std::uint32_t sample = static_cast<std::uint32_t>(blockIdx.x) * blockDim.x + threadIdx.x;
             if (sample < batch) times[sample] = time;
         }
-        __global__ void make_labels_kernel(std::uint32_t* const labels, const std::uint32_t batch, const std::uint32_t class_index, const std::uint32_t class_count) {
+        __global__ void make_labels_kernel(std::uint32_t* const labels, const std::uint32_t batch, const std::uint32_t class_index, const std::uint32_t class_count, const std::uint32_t first_sample) {
             const std::uint32_t sample = static_cast<std::uint32_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-            if (sample < batch) labels[sample] = class_index == UINT32_MAX ? sample % class_count : class_index;
+            if (sample < batch) labels[sample] = class_index == UINT32_MAX ? (sample + first_sample) % class_count : class_index;
         }
         __global__ void combine_guidance_kernel(const float* const conditional, const float* const unconditional, float* const output, const float guidance, const std::size_t count) {
             const std::size_t index = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -49,15 +49,15 @@ namespace flowdit::kernels {
             const std::size_t index = static_cast<std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
             if (index < count) state[index] += step_size * (first[index] + 2.0F * second[index] + 2.0F * third[index] + fourth[index]) / 6.0F;
         }
-    }
-    void make_sampling_noise(const ::cuda::stream_ref stream, float* const state, const std::uint64_t seed, const std::uint32_t batch, const std::uint32_t sample_elements) {
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(batch), ::cuda::block_dims(thread_count))), make_sampling_noise_kernel, state, seed, sample_elements);
+    } // namespace
+    void make_sampling_noise(const ::cuda::stream_ref stream, float* const state, const std::uint64_t seed, const std::uint32_t batch, const std::uint32_t sample_elements, const std::uint32_t first_sample) {
+        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(batch), ::cuda::block_dims(thread_count))), make_sampling_noise_kernel, state, seed, sample_elements, first_sample);
     }
     void make_sampling_time(const ::cuda::stream_ref stream, float* const times, const float time, const std::uint32_t batch) {
         ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(::cuda::ceil_div(batch, thread_count)), ::cuda::block_dims(thread_count))), make_sampling_time_kernel, times, time, batch);
     }
-    void make_labels(const ::cuda::stream_ref stream, std::uint32_t* const labels, const std::uint32_t batch, const std::uint32_t class_index, const std::uint32_t class_count) {
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(::cuda::ceil_div(batch, thread_count)), ::cuda::block_dims(thread_count))), make_labels_kernel, labels, batch, class_index, class_count);
+    void make_labels(const ::cuda::stream_ref stream, std::uint32_t* const labels, const std::uint32_t batch, const std::uint32_t class_index, const std::uint32_t class_count, const std::uint32_t first_sample) {
+        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(::cuda::ceil_div(batch, thread_count)), ::cuda::block_dims(thread_count))), make_labels_kernel, labels, batch, class_index, class_count, first_sample);
     }
     void combine_guidance(const ::cuda::stream_ref stream, const float* const conditional, const float* const unconditional, float* const output, const float guidance, const std::size_t count) {
         ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(::cuda::ceil_div(count, static_cast<std::size_t>(thread_count))), ::cuda::block_dims(thread_count))), combine_guidance_kernel, conditional, unconditional, output, guidance, count);

@@ -56,7 +56,7 @@ namespace flowdit::serialization::safetensors {
                 if (name != "__metadata__") selected.push_back(name);
         result.tensors.reserve(selected.size());
         for (const auto& name : selected) {
-            const auto& description = header.at(name);
+            const auto& description   = header.at(name);
             const std::uint64_t begin = description.at("data_offsets").at(0).get<std::uint64_t>();
             const std::uint64_t end   = description.at("data_offsets").at(1).get<std::uint64_t>();
             Tensor tensor{

@@ -7,7 +7,7 @@ namespace flowdit {
     namespace {
         std::vector<float> load_parameters(const std::filesystem::path& path) {
             const serialization::safetensors::File file = serialization::safetensors::read(path, std::array<std::string_view, 1>{"model.ema"});
-            const auto& tensor = file.tensors.front();
+            const auto& tensor                          = file.tensors.front();
             std::vector<float> result(tensor.data.size() / sizeof(float));
             std::memcpy(result.data(), tensor.data.data(), tensor.data.size());
             return result;

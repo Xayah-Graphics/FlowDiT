@@ -17,20 +17,21 @@ export namespace flowdit {
         SamplingRequest sampling;
     };
     enum class Mode { none, training, sampling };
-    enum class Stage { idle, loading, optimizing, preview_parameters, preview_ema, sampling, saving, complete, stopped, failed };
-    inline constexpr std::array<std::string_view, 10> stage_names{"Idle", "Loading", "Training", "Raw preview", "EMA preview", "Sampling", "Saving", "Complete", "Stopped", "Failed"};
+    enum class Stage { idle, loading, preparing, optimizing, preview_parameters, preview_ema, sampling, saving, complete, stopped, failed };
+    inline constexpr std::array<std::string_view, 11> stage_names{"Idle", "Loading", "Preparing latents", "Training", "Raw preview", "EMA preview", "Sampling", "Saving", "Complete", "Stopped", "Failed"};
     struct SessionStatus final {
         Mode mode{Mode::none};
         Stage stage{Stage::idle};
         bool busy{}, closing{}, finished{};
         TrainingState training;
+        std::uint32_t prepared{}, preparation_count{};
         SamplingProgress sampling;
         std::chrono::steady_clock::time_point started{}, ended{};
         std::string error;
     };
     struct FrameInfo final {
-        SamplingRequest request;
         ImageSpecification image;
+        std::vector<std::uint32_t> labels;
     };
     struct SessionObserver final {
         std::function<void()> notify;
@@ -60,11 +61,12 @@ export namespace flowdit {
         std::unique_ptr<Sampler> sampler;
         std::filesystem::path sampler_checkpoint;
         ImageSpecification sampler_image;
+        LatentConfiguration sampler_latent;
         std::jthread worker;
         void report(Stage stage);
-        SamplingObserver observe(PixelRepresentation* representation = nullptr, const FrameInfo* info = nullptr);
-        void publish_sample(const SamplingResult& result, PixelRepresentation& representation, ::cuda::stream_ref stream, SampleInfo info, bool preview);
+        bool generate(const std::function<std::optional<SamplingResult>(const SamplingRequest&, const SamplingObserver&)>& sample, ::cuda::stream_ref stream, const LatentConfiguration& representation, const std::filesystem::path& dataset, SampleInfo info, bool interactive);
         void run();
+        void train_autoencoder(const TrainRequest& request);
         void execute(const TrainRequest& request);
         void execute(const SampleRequest& request);
     };
