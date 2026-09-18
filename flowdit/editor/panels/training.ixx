@@ -14,6 +14,7 @@ export namespace flowdit::editor {
         SampleInfo preview;
         Canvas canvas;
         double elapsed_base{};
+        std::uint64_t first_step{};
         bool stopping{}, attached{};
         void select(Renderer& renderer, const Catalog& catalog, const DatasetEntry& dataset, std::string name = {});
         void accept(Renderer& renderer, const SessionUpdate& update);

@@ -16,6 +16,7 @@ namespace flowdit::editor {
         stopping      = false;
         attached      = false;
         elapsed_base  = 0;
+        first_step    = 0;
         run           = std::move(name);
         configuration = catalog.training(dataset);
         if (run.empty()) return;
@@ -119,6 +120,20 @@ namespace flowdit::editor {
         if (progress.stage == Stage::complete) state = progress.training.step >= configuration.end_step ? "Target reached" : "Stopped";
         if (run.empty()) ImGui::TextDisabled("Ready to train");
         else ImGui::TextDisabled("%.*s / step %llu", static_cast<int>(state.size()), state.data(), progress.training.step);
+        if (running && progress.training_started != std::chrono::steady_clock::time_point{}) {
+            if (progress.training.step > first_step) {
+                const double steps = static_cast<double>(progress.training.step - first_step);
+                const double rate  = steps / (progress.training.elapsed_seconds - elapsed_base);
+                ImGui::TextDisabled("%.2f step/s", rate);
+                if (!stopping && progress.training.step < configuration.end_step) {
+                    const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - progress.training_started).count();
+                    const auto remaining = static_cast<std::uint64_t>(std::ceil((configuration.end_step - progress.training.step) * elapsed / steps));
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("· ETA ~%llu:%02llu:%02llu", remaining / 3600, remaining / 60 % 60, remaining % 60);
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Based on this session, including observed preview and checkpoint time.\nExcludes initialization and latent cache preparation.");
+                }
+            } else ImGui::TextDisabled("Measuring speed...");
+        }
         ImGui::BeginDisabled(status.busy);
         number_field("Target steps", ImGuiDataType_U64, &configuration.end_step);
         ImGui::EndDisabled();
@@ -135,6 +150,8 @@ namespace flowdit::editor {
             ImGui::BeginDisabled(status.busy || !dataset || !error.empty() || (configuration.stage == TrainingStage::flowdit && configuration.autoencoder_checkpoint.empty()) || (!run.empty() && !resumable) || (!run.empty() && configuration.end_step <= progress.training.step));
             if (ImGui::Button(run.empty() ? "Start training" : "Continue training", {-1, 0})) {
                 std::filesystem::path checkpoint;
+                first_step   = 0;
+                elapsed_base = 0;
                 if (run.empty()) {
                     configuration.output = catalog.training(entry, configuration.stage).output;
                     run                  = configuration.output.filename().string();
@@ -142,6 +159,7 @@ namespace flowdit::editor {
                     const auto& latest = entry.runs.at(run).checkpoints.front();
                     checkpoint         = latest.path;
                     elapsed_base       = latest.training_seconds;
+                    first_step         = latest.step;
                 }
                 stopping = false;
                 attached = true;

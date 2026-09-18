@@ -26,7 +26,7 @@ export namespace flowdit {
         TrainingState training;
         std::uint32_t prepared{}, preparation_count{};
         SamplingProgress sampling;
-        std::chrono::steady_clock::time_point started{}, ended{};
+        std::chrono::steady_clock::time_point started{}, training_started{}, ended{};
         std::string error;
     };
     struct FrameInfo final {

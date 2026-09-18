@@ -186,6 +186,11 @@ namespace flowdit {
             update.checkpoints.push_back(path);
         };
         preview();
+        {
+            const std::lock_guard lock{mutex};
+            update.status.training         = trainer.state;
+            update.status.training_started = std::chrono::steady_clock::now();
+        }
         while (trainer.state.step < config.end_step && !cancellation.stop_requested()) {
             report(Stage::optimizing);
             const auto started = std::chrono::steady_clock::now();
@@ -272,6 +277,11 @@ namespace flowdit {
                 if (!generate([&](const SamplingRequest& r, const SamplingObserver& o) { return runtime.sample(parameters, r, o); }, stream, cache->configuration, config.dataset, info, false)) break;
             }
         };
+        {
+            const std::lock_guard lock{mutex};
+            update.status.training         = trainer.state;
+            update.status.training_started = std::chrono::steady_clock::now();
+        }
         while (trainer.state.step < config.end_step && !cancellation.stop_requested()) {
             report(Stage::optimizing);
             const auto started = std::chrono::steady_clock::now();
