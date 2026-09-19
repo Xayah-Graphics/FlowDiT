@@ -64,9 +64,8 @@ export namespace flowdit {
         LatentConfiguration sampler_latent;
         std::jthread worker;
         void report(Stage stage);
-        bool generate(const std::function<std::optional<SamplingResult>(const SamplingRequest&, const SamplingObserver&)>& sample, ::cuda::stream_ref stream, const LatentConfiguration& representation, const std::filesystem::path& dataset, SampleInfo info, bool interactive);
+        bool generate(const std::function<std::optional<SamplingResult>(const SamplingRequest&, const SamplingObserver&)>& sample, ::cuda::stream_ref stream, const LatentConfiguration& representation, SampleInfo info, bool interactive);
         void run();
-        void train_autoencoder(const TrainRequest& request);
         void execute(const TrainRequest& request);
         void execute(const SampleRequest& request);
     };

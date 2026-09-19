@@ -60,10 +60,10 @@ include(cmake/ClionCudaFacade.cmake)
 # ============================================================================
 add_library(flowdit_core STATIC)
 target_sources(flowdit_core PRIVATE
-        flowdit/core/autoencoder/configuration.cpp
-        flowdit/core/autoencoder/perceptual.cpp
-        flowdit/core/autoencoder/trainer.cpp
-        flowdit/core/autoencoder/model.cpp
+        flowdit/core/tokenizer/configuration.cpp
+        flowdit/core/tokenizer/dcae.cpp
+        flowdit/core/tokenizer/kernels.cu
+        flowdit/core/neural/attention.cpp
         flowdit/core/headless.cpp
         flowdit/core/dataset/cifar.cpp
         flowdit/core/dataset/folder.cpp
@@ -74,8 +74,6 @@ target_sources(flowdit_core PRIVATE
         flowdit/core/model/configuration.cpp
         flowdit/core/model/flowdit.cpp
         flowdit/core/model/kernels.cu
-        flowdit/core/neural/spatial.cpp
-        flowdit/core/neural/spatial-kernels.cu
         flowdit/core/neural/matmul.cpp
         flowdit/core/neural/training-state.cpp
         flowdit/core/neural/training-state.cu
@@ -96,10 +94,9 @@ target_sources(flowdit_core PRIVATE
         flowdit/core/training/kernels.cu
         flowdit/core/training/trainer.cpp
         PUBLIC FILE_SET cxx_modules TYPE CXX_MODULES FILES
-        flowdit/core/autoencoder/configuration.ixx
-        flowdit/core/autoencoder/perceptual.ixx
-        flowdit/core/autoencoder/trainer.ixx
-        flowdit/core/autoencoder/model.ixx
+        flowdit/core/tokenizer/configuration.ixx
+        flowdit/core/tokenizer/dcae.ixx
+        flowdit/core/neural/attention.ixx
         flowdit/core/headless.ixx
         flowdit/core/dataset/cifar.ixx
         flowdit/core/dataset/folder.ixx
@@ -110,7 +107,6 @@ target_sources(flowdit_core PRIVATE
         flowdit/core/io/output.ixx
         flowdit/core/model/configuration.ixx
         flowdit/core/model/flowdit.ixx
-        flowdit/core/neural/spatial.ixx
         flowdit/core/neural/matmul.ixx
         flowdit/core/neural/training-state.ixx
         flowdit/core/neural/transformer.ixx
@@ -130,9 +126,10 @@ target_sources(flowdit_core PRIVATE
         flowdit/core/training/trainer.ixx)
 target_include_directories(flowdit_core PUBLIC "${FLOWDIT_CLION_CUDA_INCLUDE_DIRECTORY}")
 target_compile_definitions(flowdit_core PRIVATE FLOWDIT_PROJECT_VERSION="${PROJECT_VERSION}"
-        FLOWDIT_DATA_DIRECTORY="${PROJECT_SOURCE_DIR}/data")
+        FLOWDIT_DATA_DIRECTORY="${PROJECT_SOURCE_DIR}/data"
+        FLOWDIT_ASSET_DIRECTORY="${PROJECT_SOURCE_DIR}/assets")
 target_link_libraries(flowdit_core PUBLIC CCCL::libcudacxx CUDA::toolkit Threads::Threads
-        PRIVATE flowdit::cudnn CUDA::cublas CUDA::cublasLt nlohmann_json::nlohmann_json flowdit::stb)
+        PRIVATE flowdit::cudnn CUDA::cublas CUDA::cublasLt CUDA::nvrtc nlohmann_json::nlohmann_json flowdit::stb)
 
 # ============================================================================
 # Editor

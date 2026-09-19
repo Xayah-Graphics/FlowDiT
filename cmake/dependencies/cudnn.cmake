@@ -8,6 +8,12 @@ find_path(FLOWDIT_CUDNN_INCLUDE cudnn.h HINTS ENV CUDNN_ROOT ${FLOWDIT_CUDNN_ROO
 find_library(FLOWDIT_CUDNN_LIBRARY NAMES cudnn HINTS ENV CUDNN_ROOT ${FLOWDIT_CUDNN_ROOTS} PATH_SUFFIXES lib/13.3/x64 lib64 lib REQUIRED)
 add_library(flowdit::cudnn UNKNOWN IMPORTED GLOBAL)
 set_target_properties(flowdit::cudnn PROPERTIES IMPORTED_LOCATION "${FLOWDIT_CUDNN_LIBRARY}" INTERFACE_INCLUDE_DIRECTORIES "${FLOWDIT_CUDNN_INCLUDE}")
+FetchContent_Declare(cudnn_frontend
+        URL "https://codeload.github.com/NVIDIA/cudnn-frontend/tar.gz/refs/tags/v1.27.0"
+        URL_HASH SHA256=7A3386B516FC8C0BA047B912272ECBBD3185E66154C512F8F635072A9C9611DE
+        SOURCE_SUBDIR flowdit-header-only SYSTEM EXCLUDE_FROM_ALL)
+FetchContent_MakeAvailable(cudnn_frontend)
+set_property(TARGET flowdit::cudnn APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES "${cudnn_frontend_SOURCE_DIR}/include")
 if (WIN32)
     get_filename_component(FLOWDIT_CUDNN_ROOT "${FLOWDIT_CUDNN_INCLUDE}/../.." ABSOLUTE)
     file(GLOB FLOWDIT_CUDNN_DLLS "${FLOWDIT_CUDNN_ROOT}/bin/13.3/x64/*.dll")

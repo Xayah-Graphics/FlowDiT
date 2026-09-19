@@ -3,192 +3,158 @@ module;
 #include <flowdit/cuda.h>
 module flowdit.neural.transformer;
 import std;
-import flowdit.neural.matmul;
 namespace flowdit::neural {
-    namespace {
-        std::size_t align_workspace(const std::size_t value) {
-            return (value + 255uz) & ~255uz;
-        }
-        template <class Type>
-        Type* workspace_pointer(std::uint8_t* const workspace, const std::size_t offset) {
-            return reinterpret_cast<Type*>(workspace + offset);
-        }
-        void initialize_xavier(std::vector<float>& values, const std::size_t offset, const std::size_t count, const std::uint32_t input_width, const std::uint32_t output_width, std::mt19937_64& generator) {
-            const float extent = std::sqrt(6.0F / static_cast<float>(input_width + output_width));
-            std::uniform_real_distribution<float> distribution{-extent, extent};
-            for (std::size_t index = 0uz; index < count; ++index) values[offset + index] = distribution(generator);
-        }
-    } // namespace
-    TransformerParameterLayout::TransformerParameterLayout(const TransformerConfiguration& source_configuration) : configuration{source_configuration}, blocks(configuration.block_count) {
-        std::size_t offset{};
-        for (TransformerBlockParameterLayout& block : blocks) {
-            block.modulation_weight = offset;
-            offset += static_cast<std::size_t>(configuration.width) * 6uz * configuration.width;
-            block.modulation_bias = offset;
-            offset += 6uz * configuration.width;
-            block.qkv_weight = offset;
-            offset += static_cast<std::size_t>(configuration.width) * 3uz * configuration.width;
-            block.qkv_bias = offset;
-            offset += 3uz * configuration.width;
-            block.attention_output_weight = offset;
-            offset += static_cast<std::size_t>(configuration.width) * configuration.width;
-            block.attention_output_bias = offset;
-            offset += configuration.width;
-            block.mlp_input_weight = offset;
-            offset += static_cast<std::size_t>(configuration.width) * configuration.mlp_width;
-            block.mlp_input_bias = offset;
-            offset += configuration.mlp_width;
-            block.mlp_output_weight = offset;
-            offset += static_cast<std::size_t>(configuration.mlp_width) * configuration.width;
-            block.mlp_output_bias = offset;
-            offset += configuration.width;
-        }
-        parameter_count = offset;
-    }
-    TransformerWorkspaceLayout::TransformerWorkspaceLayout(const TransformerConfiguration& source_configuration, const std::uint32_t source_batch) : configuration{source_configuration}, batch{source_batch}, blocks(configuration.block_count) {
-        const std::size_t token_count = static_cast<std::size_t>(batch) * configuration.sequence;
-        std::size_t offset{};
-        for (std::uint32_t index = 0u; index < configuration.block_count; ++index) {
-            TransformerBlockWorkspaceLayout& block      = blocks[index];
-            block.modulation                            = offset;
-            offset                                      = align_workspace(offset + static_cast<std::size_t>(batch) * 6uz * configuration.width * sizeof(float));
-            block.attention_normalized                  = offset;
-            offset                                      = align_workspace(offset + token_count * configuration.width * sizeof(float));
-            block.attention_means                       = offset;
-            offset                                      = align_workspace(offset + token_count * sizeof(float));
-            block.attention_inverse_standard_deviations = offset;
-            offset                                      = align_workspace(offset + token_count * sizeof(float));
-            block.qkv                                   = offset;
-            offset                                      = align_workspace(offset + token_count * 3uz * configuration.width * sizeof(float));
-            block.attention                             = offset;
-            offset                                      = align_workspace(offset + token_count * configuration.width * sizeof(float));
-            block.attention_log_sum_exp                 = offset;
-            offset                                      = align_workspace(offset + static_cast<std::size_t>(batch) * configuration.head_count * configuration.sequence * sizeof(float));
-            block.attention_projected                   = offset;
-            offset                                      = align_workspace(offset + token_count * configuration.width * sizeof(float));
-            block.after_attention                       = offset;
-            offset                                      = align_workspace(offset + token_count * configuration.width * sizeof(float));
-            block.mlp_normalized                        = offset;
-            offset                                      = align_workspace(offset + token_count * configuration.width * sizeof(float));
-            block.mlp_means                             = offset;
-            offset                                      = align_workspace(offset + token_count * sizeof(float));
-            block.mlp_inverse_standard_deviations       = offset;
-            offset                                      = align_workspace(offset + token_count * sizeof(float));
-            block.mlp_preactivation                     = offset;
-            offset                                      = align_workspace(offset + token_count * configuration.mlp_width * sizeof(float));
-            block.mlp_hidden                            = offset;
-            offset                                      = align_workspace(offset + token_count * configuration.mlp_width * sizeof(float));
-            block.mlp_projected                         = offset;
-            offset                                      = align_workspace(offset + token_count * configuration.width * sizeof(float));
-            block.output                                = offset;
-            if (index + 1u < configuration.block_count) offset = align_workspace(offset + token_count * configuration.width * sizeof(float));
-        }
-        gradient_a                 = offset;
-        offset                     = align_workspace(offset + token_count * configuration.width * sizeof(float));
-        gradient_b                 = offset;
-        offset                     = align_workspace(offset + token_count * configuration.width * sizeof(float));
-        branch_gradient            = offset;
-        offset                     = align_workspace(offset + token_count * configuration.width * sizeof(float));
-        normalized_gradient        = offset;
-        offset                     = align_workspace(offset + token_count * configuration.width * sizeof(float));
-        modulation_gradient        = offset;
-        offset                     = align_workspace(offset + static_cast<std::size_t>(batch) * 6uz * configuration.width * sizeof(float));
-        qkv_gradient               = offset;
-        offset                     = align_workspace(offset + token_count * 3uz * configuration.width * sizeof(float));
-        attention_delta            = offset;
-        offset                     = align_workspace(offset + static_cast<std::size_t>(batch) * configuration.head_count * configuration.sequence * sizeof(float));
-        mlp_preactivation_gradient = offset;
-        byte_count                 = align_workspace(offset + token_count * configuration.mlp_width * sizeof(float));
-    }
-    Transformer::Transformer(MatmulRuntime& source_matmul, const TransformerConfiguration& configuration) : matmul{source_matmul}, parameters{configuration} {}
-    std::vector<float> Transformer::initialize_parameters(const std::uint64_t seed) const {
-        std::vector<float> values(parameters.parameter_count);
-        std::mt19937_64 generator{seed};
-        const std::uint32_t width = parameters.configuration.width;
-        for (const TransformerBlockParameterLayout& block : parameters.blocks) {
-            initialize_xavier(values, block.qkv_weight, static_cast<std::size_t>(width) * 3uz * width, width, 3u * width, generator);
-            initialize_xavier(values, block.attention_output_weight, static_cast<std::size_t>(width) * width, width, width, generator);
-            initialize_xavier(values, block.mlp_input_weight, static_cast<std::size_t>(width) * parameters.configuration.mlp_width, width, parameters.configuration.mlp_width, generator);
-            initialize_xavier(values, block.mlp_output_weight, static_cast<std::size_t>(parameters.configuration.mlp_width) * width, parameters.configuration.mlp_width, width, generator);
-        }
-        return values;
-    }
-    void Transformer::forward(const float* const parameter_values, const float* const tokens, const float* const condition, float* const output, std::uint8_t* const workspace, const TransformerWorkspaceLayout& workspace_layout) {
-        const TransformerConfiguration& configuration = parameters.configuration;
-        const std::uint32_t token_count               = workspace_layout.batch * configuration.sequence;
-        for (std::uint32_t index = 0u; index < configuration.block_count; ++index) {
-            const TransformerBlockParameterLayout& parameter = parameters.blocks[index];
-            const TransformerBlockWorkspaceLayout& block     = workspace_layout.blocks[index];
-            const float* input                               = index == 0u ? tokens : workspace_pointer<float>(workspace, workspace_layout.blocks[index - 1u].output);
-            float* modulation                                = workspace_pointer<float>(workspace, block.modulation);
-            float* attention_normalized                      = workspace_pointer<float>(workspace, block.attention_normalized);
-            float* qkv                                       = workspace_pointer<float>(workspace, block.qkv);
-            float* attention                                 = workspace_pointer<float>(workspace, block.attention);
-            float* attention_projected                       = workspace_pointer<float>(workspace, block.attention_projected);
-            float* after_attention                           = workspace_pointer<float>(workspace, block.after_attention);
-            float* mlp_normalized                            = workspace_pointer<float>(workspace, block.mlp_normalized);
-            float* mlp_preactivation                         = workspace_pointer<float>(workspace, block.mlp_preactivation);
-            float* mlp_hidden                                = workspace_pointer<float>(workspace, block.mlp_hidden);
-            float* mlp_projected                             = workspace_pointer<float>(workspace, block.mlp_projected);
-            float* block_output                              = index + 1u == configuration.block_count ? output : workspace_pointer<float>(workspace, block.output);
-            matmul.execute({condition, parameter_values + parameter.modulation_weight, modulation, workspace_layout.batch, 6u * configuration.width, configuration.width, false, false, MatmulEpilogue::bias, parameter_values + parameter.modulation_bias});
-            kernels::adaln_forward(matmul.stream, input, modulation, attention_normalized, workspace_pointer<float>(workspace, block.attention_means), workspace_pointer<float>(workspace, block.attention_inverse_standard_deviations), workspace_layout.batch, configuration.sequence, configuration.width, 0u);
-            matmul.execute({attention_normalized, parameter_values + parameter.qkv_weight, qkv, token_count, 3u * configuration.width, configuration.width, false, false, MatmulEpilogue::bias, parameter_values + parameter.qkv_bias});
-            kernels::sdpa_forward(matmul.stream, qkv, attention, workspace_pointer<float>(workspace, block.attention_log_sum_exp), workspace_layout.batch, configuration.sequence, configuration.width, configuration.head_count);
-            matmul.execute({attention, parameter_values + parameter.attention_output_weight, attention_projected, token_count, configuration.width, configuration.width, false, false, MatmulEpilogue::bias, parameter_values + parameter.attention_output_bias});
-            kernels::residual_forward(matmul.stream, input, attention_projected, modulation, after_attention, workspace_layout.batch, configuration.sequence, configuration.width, 0u);
-            kernels::adaln_forward(matmul.stream, after_attention, modulation, mlp_normalized, workspace_pointer<float>(workspace, block.mlp_means), workspace_pointer<float>(workspace, block.mlp_inverse_standard_deviations), workspace_layout.batch, configuration.sequence, configuration.width, 3u);
-            matmul.execute({mlp_normalized, parameter_values + parameter.mlp_input_weight, mlp_hidden, token_count, configuration.mlp_width, configuration.width, false, false, MatmulEpilogue::gelu_aux_bias, parameter_values + parameter.mlp_input_bias, 0.0F, mlp_preactivation});
-            matmul.execute({mlp_hidden, parameter_values + parameter.mlp_output_weight, mlp_projected, token_count, configuration.width, configuration.mlp_width, false, false, MatmulEpilogue::bias, parameter_values + parameter.mlp_output_bias});
-            kernels::residual_forward(matmul.stream, after_attention, mlp_projected, modulation, block_output, workspace_layout.batch, configuration.sequence, configuration.width, 3u);
+    TransformerParameterLayout::TransformerParameterLayout(TransformerConfiguration c) {
+        const std::size_t d = c.width, m = c.mlp_width;
+        const auto take = [&](std::size_t n) {
+            const auto offset = count;
+            count += n;
+            return offset;
+        };
+        for (std::uint32_t i = 0; i < 2 * c.side_blocks + 1; ++i) {
+            TransformerBlockLayout b{};
+            b.norm1_weight    = take(d);
+            b.norm1_bias      = take(d);
+            b.qkv             = take(3 * d * d);
+            b.projection      = take(d * d);
+            b.projection_bias = take(d);
+            b.norm2_weight    = take(d);
+            b.norm2_bias      = take(d);
+            b.mlp1            = take(m * d);
+            b.mlp1_bias       = take(m);
+            b.mlp2            = take(d * m);
+            b.mlp2_bias       = take(d);
+            if (i > c.side_blocks) {
+                b.skip      = take(2 * d * d);
+                b.skip_bias = take(d);
+            }
+            blocks.push_back(b);
         }
     }
-    void Transformer::backward(const float* const parameter_values, float* const parameter_gradients, const float* const tokens, const float* const condition, const float* const output_gradient, float* const token_gradient, float* const condition_gradient, std::uint8_t* const workspace, const TransformerWorkspaceLayout& workspace_layout) {
-        const TransformerConfiguration& configuration = parameters.configuration;
-        const std::uint32_t token_count               = workspace_layout.batch * configuration.sequence;
-        float* gradient_a                             = workspace_pointer<float>(workspace, workspace_layout.gradient_a);
-        float* gradient_b                             = workspace_pointer<float>(workspace, workspace_layout.gradient_b);
-        float* branch_gradient                        = workspace_pointer<float>(workspace, workspace_layout.branch_gradient);
-        float* normalized_gradient                    = workspace_pointer<float>(workspace, workspace_layout.normalized_gradient);
-        float* modulation_gradient                    = workspace_pointer<float>(workspace, workspace_layout.modulation_gradient);
-        float* qkv_gradient                           = workspace_pointer<float>(workspace, workspace_layout.qkv_gradient);
-        float* attention_delta                        = workspace_pointer<float>(workspace, workspace_layout.attention_delta);
-        float* mlp_preactivation_gradient             = workspace_pointer<float>(workspace, workspace_layout.mlp_preactivation_gradient);
-        const float* current_gradient                 = output_gradient;
-        for (std::uint32_t reverse = configuration.block_count; reverse != 0u; --reverse) {
-            const std::uint32_t index                        = reverse - 1u;
-            const TransformerBlockParameterLayout& parameter = parameters.blocks[index];
-            const TransformerBlockWorkspaceLayout& block     = workspace_layout.blocks[index];
-            const float* input                               = index == 0u ? tokens : workspace_pointer<float>(workspace, workspace_layout.blocks[index - 1u].output);
-            const float* modulation                          = workspace_pointer<float>(workspace, block.modulation);
-            const float* attention_normalized                = workspace_pointer<float>(workspace, block.attention_normalized);
-            const float* qkv                                 = workspace_pointer<float>(workspace, block.qkv);
-            const float* attention                           = workspace_pointer<float>(workspace, block.attention);
-            const float* attention_projected                 = workspace_pointer<float>(workspace, block.attention_projected);
-            const float* after_attention                     = workspace_pointer<float>(workspace, block.after_attention);
-            const float* mlp_normalized                      = workspace_pointer<float>(workspace, block.mlp_normalized);
-            const float* mlp_preactivation                   = workspace_pointer<float>(workspace, block.mlp_preactivation);
-            const float* mlp_hidden                          = workspace_pointer<float>(workspace, block.mlp_hidden);
-            const float* mlp_projected                       = workspace_pointer<float>(workspace, block.mlp_projected);
-            float* after_attention_gradient                  = index % 2u == 0u ? gradient_a : gradient_b;
-            float* input_gradient                            = index == 0u ? token_gradient : (index % 2u == 0u ? gradient_b : gradient_a);
-            kernels::residual_backward(matmul.stream, current_gradient, mlp_projected, modulation, branch_gradient, modulation_gradient, workspace_layout.batch, configuration.sequence, configuration.width, 3u);
-            matmul.execute({mlp_hidden, branch_gradient, parameter_gradients + parameter.mlp_output_weight, configuration.mlp_width, configuration.width, token_count, true, false, MatmulEpilogue::bias_gradient, parameter_gradients + parameter.mlp_output_bias});
-            matmul.execute({branch_gradient, parameter_values + parameter.mlp_output_weight, mlp_preactivation_gradient, token_count, configuration.mlp_width, configuration.width, false, true, MatmulEpilogue::gelu_gradient, nullptr, 0.0F, mlp_preactivation});
-            matmul.execute({mlp_normalized, mlp_preactivation_gradient, parameter_gradients + parameter.mlp_input_weight, configuration.width, configuration.mlp_width, token_count, true, false, MatmulEpilogue::bias_gradient, parameter_gradients + parameter.mlp_input_bias});
-            matmul.execute({mlp_preactivation_gradient, parameter_values + parameter.mlp_input_weight, normalized_gradient, token_count, configuration.width, configuration.mlp_width, false, true});
-            kernels::adaln_backward(matmul.stream, after_attention, modulation, normalized_gradient, current_gradient, workspace_pointer<float>(workspace, block.mlp_means), workspace_pointer<float>(workspace, block.mlp_inverse_standard_deviations), after_attention_gradient, modulation_gradient, workspace_layout.batch, configuration.sequence, configuration.width, 3u);
-            kernels::residual_backward(matmul.stream, after_attention_gradient, attention_projected, modulation, branch_gradient, modulation_gradient, workspace_layout.batch, configuration.sequence, configuration.width, 0u);
-            matmul.execute({attention, branch_gradient, parameter_gradients + parameter.attention_output_weight, configuration.width, configuration.width, token_count, true, false, MatmulEpilogue::bias_gradient, parameter_gradients + parameter.attention_output_bias});
-            matmul.execute({branch_gradient, parameter_values + parameter.attention_output_weight, normalized_gradient, token_count, configuration.width, configuration.width, false, true});
-            kernels::sdpa_backward(matmul.stream, qkv, attention, normalized_gradient, workspace_pointer<float>(workspace, block.attention_log_sum_exp), attention_delta, qkv_gradient, workspace_layout.batch, configuration.sequence, configuration.width, configuration.head_count);
-            matmul.execute({attention_normalized, qkv_gradient, parameter_gradients + parameter.qkv_weight, configuration.width, 3u * configuration.width, token_count, true, false, MatmulEpilogue::bias_gradient, parameter_gradients + parameter.qkv_bias});
-            ::cuda::fill_bytes(matmul.stream, ::cuda::std::span<float>{parameter_gradients + parameter.qkv_bias + configuration.width, configuration.width}, 0u);
-            matmul.execute({qkv_gradient, parameter_values + parameter.qkv_weight, normalized_gradient, token_count, configuration.width, 3u * configuration.width, false, true});
-            kernels::adaln_backward(matmul.stream, input, modulation, normalized_gradient, after_attention_gradient, workspace_pointer<float>(workspace, block.attention_means), workspace_pointer<float>(workspace, block.attention_inverse_standard_deviations), input_gradient, modulation_gradient, workspace_layout.batch, configuration.sequence, configuration.width, 0u);
-            matmul.execute({condition, modulation_gradient, parameter_gradients + parameter.modulation_weight, configuration.width, 6u * configuration.width, workspace_layout.batch, true, false, MatmulEpilogue::bias_gradient, parameter_gradients + parameter.modulation_bias});
-            matmul.execute({modulation_gradient, parameter_values + parameter.modulation_weight, condition_gradient, workspace_layout.batch, configuration.width, 6u * configuration.width, false, true, MatmulEpilogue::none, nullptr, 1.0F});
-            current_gradient = input_gradient;
+    TransformerWorkspaceLayout::TransformerWorkspaceLayout(std::uint32_t b, TransformerConfiguration c, bool train) : batch{b}, training{train} {
+        const std::size_t rows = batch * c.sequence, n = rows * c.width;
+        const auto take = [&](std::size_t bytes) {
+            const auto offset = byte_count;
+            byte_count += (bytes + 255) / 256 * 256;
+            return offset;
+        };
+        for (std::uint32_t i = 0; i <= 2 * c.side_blocks + 1; ++i) {
+            if (training || i <= c.side_blocks + 2) states.push_back(take(n * 2));
+            else states.push_back(states[c.side_blocks + 1 + (i - c.side_blocks - 1) % 2]);
         }
+        concatenated       = take(n * 4);
+        projected          = take(n * 2);
+        norm1              = take(n * 2);
+        qkv                = take(n * 6);
+        attended           = take(n * 2);
+        attention_residual = take(n * 2);
+        norm2              = take(n * 2);
+        mlp                = take(rows * c.mlp_width * 2);
+        activated          = take(rows * c.mlp_width * 2);
+        temporary          = take(n * 2);
+        mean1              = take(rows * 4);
+        inverse1           = take(rows * 4);
+        mean2              = take(rows * 4);
+        inverse2           = take(rows * 4);
+        statistics         = take(training ? rows * c.heads * 4 : 0);
+        if (training) {
+            gradient         = take(n * 2);
+            scratch_gradient = take(n * 2);
+            skip_gradients   = take(c.side_blocks * n * 2);
+            d1               = take(n * 2);
+            d2               = take(n * 2);
+            dqkv             = take(n * 6);
+            dmlp             = take(rows * c.mlp_width * 2);
+        }
+    }
+    Transformer::Transformer(::cuda::stream_ref s, MatmulRuntime& m, TransformerConfiguration c) : stream{s}, matmul{m}, configuration{c}, parameters{c} {}
+    void Transformer::initialize(std::span<float> values, std::mt19937_64& random) const {
+        std::normal_distribution<float> normal{0.f, .02f};
+        const auto matrix = [&](std::size_t at, std::size_t n) {
+            for (std::size_t i = 0; i < n; ++i) {
+                float x;
+                do {
+                    x = normal(random);
+                } while (std::abs(x) > 2.f);
+                values[at + i] = x;
+            }
+        };
+        const auto d = configuration.width, m = configuration.mlp_width;
+        for (const auto& b : parameters.blocks) {
+            std::fill_n(values.data() + b.norm1_weight, d, 1.f);
+            std::fill_n(values.data() + b.norm2_weight, d, 1.f);
+            matrix(b.qkv, 3uz * d * d);
+            matrix(b.projection, static_cast<std::size_t>(d) * d);
+            matrix(b.mlp1, static_cast<std::size_t>(d) * m);
+            matrix(b.mlp2, static_cast<std::size_t>(d) * m);
+            if (b.skip) matrix(b.skip, 2uz * d * d);
+        }
+    }
+    void Transformer::forward(const float* master, const std::uint16_t* weights, std::uint8_t* workspace, const TransformerWorkspaceLayout& l) {
+        auto plan = std::ranges::find_if(attention, [&](const auto& p) { return p.batch == l.batch && p.training == l.training; });
+        if (plan == attention.end()) plan = attention.emplace(attention.end(), stream, l.batch, configuration.sequence, configuration.width, configuration.heads, l.training);
+        for (std::uint32_t i = 0; i < parameters.blocks.size(); ++i) block_forward(i, master, weights, reinterpret_cast<std::uint16_t*>(workspace + l.states[i + 1]), workspace, l, *plan);
+    }
+    void Transformer::backward(const float* master, const std::uint16_t* weights, float* gradient, std::uint8_t* workspace, const TransformerWorkspaceLayout& l) {
+        auto& plan         = *std::ranges::find_if(attention, [&](const auto& p) { return p.batch == l.batch && p.training; });
+        const auto pointer = [&](std::size_t offset) { return reinterpret_cast<std::uint16_t*>(workspace + offset); };
+        const auto scalar  = [&](std::size_t offset) { return reinterpret_cast<float*>(workspace + offset); };
+        const auto rows = l.batch * configuration.sequence, d = configuration.width, m = configuration.mlp_width;
+        const std::size_t n = static_cast<std::size_t>(rows) * d;
+        ::cuda::fill_bytes(stream, ::cuda::std::span<std::uint16_t>{pointer(l.skip_gradients), n * configuration.side_blocks}, 0);
+        auto* dy = pointer(l.gradient);
+        auto* dx = pointer(l.scratch_gradient);
+        for (int index = static_cast<int>(parameters.blocks.size()) - 1; index >= 0; --index) {
+            const auto& b = parameters.blocks[index];
+            if (index < static_cast<int>(configuration.side_blocks)) kernels::add(stream, dy, pointer(l.skip_gradients) + index * n, dy, n);
+            const auto* input = block_forward(index, master, weights, pointer(l.temporary), workspace, l, plan);
+            linear_backward(pointer(l.activated), dy, pointer(l.dmlp), weights + b.mlp2, gradient + b.mlp2, gradient + b.mlp2_bias, rows, m, d);
+            kernels::gelu_backward(stream, pointer(l.mlp), pointer(l.dmlp), static_cast<std::size_t>(rows) * m);
+            linear_backward(pointer(l.norm2), pointer(l.dmlp), pointer(l.d1), weights + b.mlp1, gradient + b.mlp1, gradient + b.mlp1_bias, rows, d, m);
+            kernels::normalize_backward(stream, pointer(l.attention_residual), pointer(l.d1), master + b.norm2_weight, scalar(l.mean2), scalar(l.inverse2), pointer(l.d2), gradient + b.norm2_weight, gradient + b.norm2_bias, dy, rows, d);
+            linear_backward(pointer(l.attended), pointer(l.d2), pointer(l.d1), weights + b.projection, gradient + b.projection, gradient + b.projection_bias, rows, d, d);
+            plan.backward(pointer(l.qkv), pointer(l.attended), scalar(l.statistics), pointer(l.d1), pointer(l.dqkv));
+            linear_backward(pointer(l.norm1), pointer(l.dqkv), pointer(l.d1), weights + b.qkv, gradient + b.qkv, nullptr, rows, d, 3 * d);
+            kernels::normalize_backward(stream, input, pointer(l.d1), master + b.norm1_weight, scalar(l.mean1), scalar(l.inverse1), dx, gradient + b.norm1_weight, gradient + b.norm1_bias, pointer(l.d2), rows, d);
+            if (b.skip) {
+                linear_backward(pointer(l.concatenated), dx, pointer(l.dqkv), weights + b.skip, gradient + b.skip, gradient + b.skip_bias, rows, 2 * d, d);
+                kernels::split(stream, pointer(l.dqkv), dx, pointer(l.skip_gradients) + (2 * configuration.side_blocks - index) * n, rows, d);
+            }
+            std::swap(dy, dx);
+        }
+    }
+    const std::uint16_t* Transformer::block_forward(std::uint32_t index, const float* master, const std::uint16_t* weights, std::uint16_t* output, std::uint8_t* workspace, const TransformerWorkspaceLayout& l, Attention& plan) {
+        const auto p    = [&](std::size_t offset) { return reinterpret_cast<std::uint16_t*>(workspace + offset); };
+        const auto f    = [&](std::size_t offset) { return reinterpret_cast<float*>(workspace + offset); };
+        const auto rows = l.batch * configuration.sequence, d = configuration.width, m = configuration.mlp_width;
+        const std::size_t n = static_cast<std::size_t>(rows) * d;
+        const auto& b       = parameters.blocks[index];
+        const auto* input   = p(l.states[index]);
+        if (b.skip) {
+            const auto skip_index = 2 * configuration.side_blocks + 1 - index;
+            kernels::concatenate(stream, input, p(l.states[skip_index]), p(l.concatenated), rows, d);
+            matmul.execute({p(l.concatenated), weights + b.skip, p(l.projected), rows, d, 2 * d, false, true});
+            kernels::bias(stream, p(l.projected), master + b.skip_bias, rows, d);
+            input = p(l.projected);
+        }
+        kernels::normalize(stream, input, master + b.norm1_weight, master + b.norm1_bias, p(l.norm1), f(l.mean1), f(l.inverse1), rows, d);
+        matmul.execute({p(l.norm1), weights + b.qkv, p(l.qkv), rows, 3 * d, d, false, true});
+        plan.forward(p(l.qkv), p(l.attended), f(l.statistics));
+        matmul.execute({p(l.attended), weights + b.projection, p(l.temporary), rows, d, d, false, true});
+        kernels::bias(stream, p(l.temporary), master + b.projection_bias, rows, d);
+        kernels::add(stream, input, p(l.temporary), p(l.attention_residual), n);
+        kernels::normalize(stream, p(l.attention_residual), master + b.norm2_weight, master + b.norm2_bias, p(l.norm2), f(l.mean2), f(l.inverse2), rows, d);
+        matmul.execute({p(l.norm2), weights + b.mlp1, p(l.mlp), rows, m, d, false, true});
+        kernels::bias(stream, p(l.mlp), master + b.mlp1_bias, rows, m);
+        kernels::gelu(stream, p(l.mlp), p(l.activated), static_cast<std::size_t>(rows) * m);
+        matmul.execute({p(l.activated), weights + b.mlp2, p(l.temporary), rows, d, m, false, true});
+        kernels::bias(stream, p(l.temporary), master + b.mlp2_bias, rows, d);
+        kernels::add(stream, p(l.attention_residual), p(l.temporary), output, n);
+        return input;
+    }
+    void Transformer::linear_backward(const std::uint16_t* input, const std::uint16_t* gradient, std::uint16_t* input_gradient, const std::uint16_t* weight, float* weight_gradient, float* bias_gradient, std::uint32_t rows, std::uint32_t in, std::uint32_t out) {
+        matmul.execute({gradient, input, weight_gradient, out, in, rows, true, false, true, 1.f});
+        if (bias_gradient) kernels::bias_backward(stream, gradient, bias_gradient, rows, out);
+        matmul.execute({gradient, weight, input_gradient, rows, in, out});
     }
 } // namespace flowdit::neural

@@ -13,16 +13,14 @@ namespace flowdit {
         return {json.at("name").get<std::string>(), json.at("width"), json.at("height"), json.at("channels"), json.at("classes").get<std::vector<std::string>>()};
     }
     ImageTransfer::ImageTransfer(const ::cuda::stream_ref source, const TensorShape dimensions, const std::uint32_t count) : stream{source}, shape{dimensions}, batch{count} {}
-    TensorBatch ImageTransfer::encode(const ImageBatch& source, const bool horizontal_flip, const std::uint64_t seed, const std::uint64_t step) {
+    const float* ImageTransfer::encode(const ImageBatch& source) {
         if (!images) {
             images.emplace(stream, ::cuda::device_default_memory_pool(stream.device()), source.pixels.size(), ::cuda::no_init);
-            labels.emplace(stream, ::cuda::device_default_memory_pool(stream.device()), batch, ::cuda::no_init);
             values.emplace(stream, ::cuda::device_default_memory_pool(stream.device()), source.pixels.size(), ::cuda::no_init);
         }
         ::cuda::copy_bytes(stream, ::cuda::std::span<const std::uint8_t>{source.pixels.data(), source.pixels.size()}, *images);
-        ::cuda::copy_bytes(stream, ::cuda::std::span<const std::uint32_t>{source.labels.data(), source.labels.size()}, *labels);
-        kernels::encode_pixels(stream, images->data(), values->data(), batch, shape.width, shape.height, shape.channels, horizontal_flip, seed, step);
-        return {shape, batch, values->data(), labels->data()};
+        kernels::encode_pixels(stream, images->data(), values->data(), batch, shape.width, shape.height, shape.channels);
+        return values->data();
     }
     const std::uint8_t* ImageTransfer::decode(const TensorBatch& tensor) {
         if (!rgba) rgba.emplace(stream, ::cuda::device_default_memory_pool(stream.device()), static_cast<std::size_t>(batch) * shape.width * shape.height * 4uz, ::cuda::no_init);

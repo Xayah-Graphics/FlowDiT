@@ -31,7 +31,7 @@ namespace flowdit::editor {
         error.clear();
         if (dataset.runs.empty()) return;
         if (run.empty()) {
-            const auto found = std::ranges::find_if(dataset.runs, [](const auto& value) { return value.second.error.empty() && value.second.configuration.stage == TrainingStage::flowdit; });
+            const auto found = std::ranges::find_if(dataset.runs, [](const auto& value) { return value.second.error.empty(); });
             if (found == dataset.runs.end()) return;
             run = found->first;
         }
@@ -43,6 +43,10 @@ namespace flowdit::editor {
     }
     bool SamplingPanel::draw(Renderer& renderer, Session& session, SessionStatus& status, const Catalog& catalog, const DatasetEntry& dataset) {
         bool show{};
+        if (!dataset.training_error.empty()) {
+            ImGui::TextWrapped("%s", dataset.training_error.c_str());
+            return false;
+        }
         ImGui::BeginDisabled(status.busy);
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("Checkpoint");
@@ -51,7 +55,6 @@ namespace flowdit::editor {
         const auto label = checkpoint.path.empty() ? std::string{"No checkpoint"} : run_label(run);
         if (ImGui::BeginCombo("##checkpoint", label.c_str())) {
             for (const auto& [name, entry] : dataset.runs) {
-                if (entry.configuration.stage != TrainingStage::flowdit) continue;
                 ImGui::PushID(name.c_str());
                 ImGui::TextDisabled("%s", run_label(name).c_str());
                 if (!entry.error.empty()) ImGui::TextWrapped("%s", entry.error.c_str());
@@ -70,9 +73,9 @@ namespace flowdit::editor {
         if (!checkpoint.path.empty()) {
             ImGui::TextDisabled("Step %llu · EMA", checkpoint.step);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", checkpoint.path.string().c_str());
-            ImGui::TextDisabled("Autoencoder");
+            ImGui::TextDisabled("Tokenizer");
             ImGui::SameLine();
-            ImGui::TextUnformatted(checkpoint_label(dataset.runs.at(run).configuration.autoencoder_checkpoint).c_str());
+            ImGui::TextUnformatted(dataset.runs.at(run).configuration.tokenizer.model.c_str());
         }
         ImGui::Spacing();
         ImGui::BeginDisabled(checkpoint.path.empty() || !error.empty());

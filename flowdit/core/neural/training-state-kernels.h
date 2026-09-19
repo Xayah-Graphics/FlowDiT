@@ -4,6 +4,6 @@
 #include <cstdint>
 #include <flowdit/cuda_stream.h>
 namespace flowdit::neural::kernels {
-    void optimize(::cuda::stream_ref stream, float* parameters, float* gradients, float* first_moments, float* second_moments, float* ema, std::size_t count, float learning_rate, float first_decay, float second_decay, const std::uint64_t* step, const std::uint64_t* processed_samples, float* step_scalars, float epsilon, float weight_decay, std::uint32_t samples_per_step, std::uint64_t half_life_samples, float ramp_up_ratio);
+    void optimize(::cuda::stream_ref stream, float* parameters, float* gradients, float* first_moments, float* second_moments, float* ema, std::size_t count, float learning_rate, float first_decay, float second_decay, const std::uint64_t* step, const std::uint64_t* processed_samples, float* step_scalars, float epsilon, float weight_decay, std::uint32_t samples_per_step, std::uint64_t half_life_samples, float ramp_up_ratio, std::uint32_t warmup_steps);
 } // namespace flowdit::neural::kernels
 #endif

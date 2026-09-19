@@ -1,191 +1,100 @@
 module;
+#include "../neural/transformer-kernels.h"
+#include "../tokenizer/kernels.h"
 #include "kernels.h"
 #include <flowdit/cuda.h>
 module flowdit.model;
 import std;
-import flowdit.neural.matmul;
-import flowdit.neural.transformer;
 namespace flowdit {
     namespace {
-        neural::TransformerConfiguration make_transformer_configuration(const ModelConfiguration& configuration) {
-            return {.sequence = configuration.shape.width / configuration.patch_size * (configuration.shape.height / configuration.patch_size), .width = 256u, .block_count = 8u, .head_count = 8u, .mlp_width = 1024u};
-        }
-        std::size_t align_workspace(const std::size_t value) {
-            return (value + 255uz) & ~255uz;
-        }
-        template <class Type>
-        Type* workspace_pointer(std::uint8_t* const workspace, const std::size_t offset) {
-            return reinterpret_cast<Type*>(workspace + offset);
-        }
-        void initialize_xavier(std::vector<float>& values, const std::size_t offset, const std::size_t count, const std::uint32_t input_width, const std::uint32_t output_width, std::mt19937_64& generator) {
-            const float extent = std::sqrt(6.0F / static_cast<float>(input_width + output_width));
-            std::uniform_real_distribution<float> distribution{-extent, extent};
-            for (std::size_t index = 0uz; index < count; ++index) values[offset + index] = distribution(generator);
+        neural::TransformerConfiguration transformer_configuration(const ModelConfiguration& c) {
+            return {c.shape.width * c.shape.height / (c.patch_size * c.patch_size) + 2, c.width, c.heads, c.side_blocks, c.mlp_width};
         }
     } // namespace
-    FlowDiTParameterLayout::FlowDiTParameterLayout(const ModelConfiguration& configuration) {
-        const auto shape              = make_transformer_configuration(configuration);
-        const std::size_t patch_width = configuration.patch_size * configuration.patch_size * configuration.shape.channels;
-        const std::size_t width       = shape.width;
-        std::size_t offset{};
-        patch_weight = offset;
-        offset += patch_width * width;
-        patch_bias = offset;
-        offset += width;
-        class_embedding = offset;
-        offset += (configuration.class_count + 1uz) * width;
-        time_input_weight = offset;
-        offset += width * width;
-        time_input_bias = offset;
-        offset += width;
-        time_output_weight = offset;
-        offset += width * width;
-        time_output_bias = offset;
-        offset += width;
-        transformer = offset;
-        offset += neural::TransformerParameterLayout{shape}.parameter_count;
-        final_modulation_weight = offset;
-        offset += width * 2uz * width;
-        final_modulation_bias = offset;
-        offset += 2uz * width;
-        velocity_weight = offset;
-        offset += width * patch_width;
-        velocity_bias   = offset;
-        parameter_count = offset + patch_width;
+    FlowDiTParameterLayout::FlowDiTParameterLayout(const ModelConfiguration& c) {
+        const auto d = c.width, p = c.patch_size * c.patch_size * c.shape.channels;
+        const auto shape = transformer_configuration(c);
+        patch_weight     = 0;
+        patch_bias       = static_cast<std::size_t>(d) * p;
+        class_embedding  = patch_bias + d;
+        position         = class_embedding + (c.class_count + 1) * d;
+        transformer      = position + shape.sequence * d;
+        final_weight     = transformer + neural::TransformerParameterLayout{shape}.count;
+        final_bias       = final_weight + d;
+        velocity_weight  = final_bias + d;
+        velocity_bias    = velocity_weight + static_cast<std::size_t>(p) * d;
+        parameter_count  = velocity_bias + p;
     }
-    FlowDiTWorkspaceLayout::FlowDiTWorkspaceLayout(const std::uint32_t source_batch, const ModelConfiguration& configuration) : batch{source_batch}, transformer_layout{make_transformer_configuration(configuration), batch} {
-        const auto shape              = make_transformer_configuration(configuration);
-        const std::size_t patch_width = configuration.patch_size * configuration.patch_size * configuration.shape.channels;
-        const std::size_t sequence    = shape.sequence;
-        const std::size_t width       = shape.width;
-        const std::size_t token_count = static_cast<std::size_t>(batch) * sequence;
-        std::size_t offset{};
-        tokens                            = offset;
-        offset                            = align_workspace(offset + token_count * width * sizeof(float));
-        time_embedding                    = offset;
-        offset                            = align_workspace(offset + static_cast<std::size_t>(batch) * width * sizeof(float));
-        time_preactivation                = offset;
-        offset                            = align_workspace(offset + static_cast<std::size_t>(batch) * width * sizeof(float));
-        time_hidden                       = offset;
-        offset                            = align_workspace(offset + static_cast<std::size_t>(batch) * width * sizeof(float));
-        condition                         = offset;
-        offset                            = align_workspace(offset + static_cast<std::size_t>(batch) * width * sizeof(float));
-        condition_activated               = offset;
-        offset                            = align_workspace(offset + static_cast<std::size_t>(batch) * width * sizeof(float));
-        transformed                       = offset;
-        offset                            = align_workspace(offset + token_count * width * sizeof(float));
-        final_modulation                  = offset;
-        offset                            = align_workspace(offset + static_cast<std::size_t>(batch) * 2uz * width * sizeof(float));
-        final_normalized                  = offset;
-        offset                            = align_workspace(offset + token_count * width * sizeof(float));
-        final_means                       = offset;
-        offset                            = align_workspace(offset + token_count * sizeof(float));
-        final_inverse_standard_deviations = offset;
-        offset                            = align_workspace(offset + token_count * sizeof(float));
-        velocity                          = offset;
-        offset                            = align_workspace(offset + token_count * patch_width * sizeof(float));
-        velocity_gradient                 = offset;
-        offset                            = align_workspace(offset + token_count * patch_width * sizeof(float));
-        normalized_gradient               = offset;
-        offset                            = align_workspace(offset + token_count * width * sizeof(float));
-        transformed_gradient              = offset;
-        offset                            = align_workspace(offset + token_count * width * sizeof(float));
-        final_modulation_gradient         = offset;
-        offset                            = align_workspace(offset + static_cast<std::size_t>(batch) * 2uz * width * sizeof(float));
-        condition_gradient                = offset;
-        offset                            = align_workspace(offset + static_cast<std::size_t>(batch) * width * sizeof(float));
-        time_hidden_gradient              = offset;
-        offset                            = align_workspace(offset + static_cast<std::size_t>(batch) * width * sizeof(float));
-        time_preactivation_gradient       = offset;
-        offset                            = align_workspace(offset + static_cast<std::size_t>(batch) * width * sizeof(float));
-        transformer_workspace             = offset;
-        byte_count                        = align_workspace(offset + transformer_layout.byte_count);
+    FlowDiTWorkspaceLayout::FlowDiTWorkspaceLayout(std::uint32_t b, const ModelConfiguration& c, bool train) : batch{b}, training{train}, transformer_layout{b, transformer_configuration(c), train} {
+        const auto shape = transformer_configuration(c);
+        const auto take  = [&](std::size_t bytes) {
+            const auto offset = byte_count;
+            byte_count += (bytes + 255) / 256 * 256;
+            return offset;
+        };
+        const std::size_t rows = b * shape.sequence, images = b * (shape.sequence - 2), p = c.patch_size * c.patch_size * c.shape.channels;
+        weights       = take(FlowDiTParameterLayout{c}.parameter_count * 2);
+        patches       = take(images * p * 2);
+        embedded      = take(images * c.width * 2);
+        normalized    = take(rows * c.width * 2);
+        means         = take(rows * 4);
+        inverse       = take(rows * 4);
+        full_velocity = take(rows * p * 2);
+        velocity      = take(images * p * 4);
+        if (training) {
+            velocity_gradient = take(images * p * 4);
+            full_gradient     = take(rows * p * 2);
+            norm_gradient     = take(rows * c.width * 2);
+            patch_gradient    = take(images * c.width * 2);
+        }
+        transformer_workspace = take(transformer_layout.byte_count);
     }
-    FlowDiT::FlowDiT(const ::cuda::stream_ref source_stream, neural::MatmulRuntime& source_matmul, const ModelConfiguration& source_configuration) : configuration{source_configuration}, shape{make_transformer_configuration(configuration)}, patch_width{configuration.patch_size * configuration.patch_size * configuration.shape.channels}, stream{source_stream}, matmul{source_matmul}, parameters{configuration}, transformer{matmul, shape}, position{stream, ::cuda::device_default_memory_pool(stream.device()), static_cast<std::size_t>(shape.sequence) * shape.width, ::cuda::no_init} {
-        std::vector<float> host_position(position.size());
-        const std::uint32_t frequency_count = shape.width / 4u;
-        for (std::uint32_t y = 0u; y < configuration.shape.height / configuration.patch_size; ++y)
-            for (std::uint32_t x = 0u; x < configuration.shape.width / configuration.patch_size; ++x)
-                for (std::uint32_t frequency = 0u; frequency < frequency_count; ++frequency) {
-                    const float scale                                         = std::exp(-std::log(10'000.0F) * static_cast<float>(frequency) / static_cast<float>(frequency_count));
-                    const std::size_t offset                                  = static_cast<std::size_t>(y * (configuration.shape.width / configuration.patch_size) + x) * shape.width;
-                    host_position[offset + frequency]                         = std::sin(static_cast<float>(y) * scale);
-                    host_position[offset + frequency_count + frequency]       = std::cos(static_cast<float>(y) * scale);
-                    host_position[offset + 2uz * frequency_count + frequency] = std::sin(static_cast<float>(x) * scale);
-                    host_position[offset + 3uz * frequency_count + frequency] = std::cos(static_cast<float>(x) * scale);
-                }
-        ::cuda::copy_bytes(stream, ::cuda::std::span<const float>{host_position.data(), host_position.size()}, position);
-        stream.sync();
+    FlowDiT::FlowDiT(::cuda::stream_ref s, neural::MatmulRuntime& m, const ModelConfiguration& c) : configuration{c}, shape{transformer_configuration(c)}, patch_width{c.patch_size * c.patch_size * c.shape.channels}, stream{s}, matmul{m}, parameters{c}, transformer{s, m, shape} {}
+    std::vector<float> FlowDiT::initialize_parameters(std::uint64_t seed) const {
+        std::vector<float> result(parameters.parameter_count);
+        std::mt19937_64 random{seed};
+        std::normal_distribution<float> normal{0.f, .02f};
+        std::uniform_real_distribution<float> patch{-1.f / std::sqrt(static_cast<float>(patch_width)), 1.f / std::sqrt(static_cast<float>(patch_width))};
+        for (std::size_t i = parameters.patch_weight; i < parameters.class_embedding; ++i) result[i] = patch(random);
+        std::normal_distribution<float> embedding{0.f, 1.f};
+        for (std::size_t i = parameters.class_embedding; i < parameters.position; ++i) result[i] = embedding(random);
+        for (std::size_t i = parameters.position; i < parameters.transformer; ++i) result[i] = normal(random);
+        transformer.initialize(std::span{result}.subspan(parameters.transformer, transformer.parameters.count), random);
+        std::fill_n(result.data() + parameters.final_weight, configuration.width, 1.f);
+        for (std::size_t i = parameters.velocity_weight; i < parameters.velocity_bias; ++i) result[i] = normal(random);
+        return result;
     }
-    std::vector<float> FlowDiT::initialize_parameters(const std::uint64_t seed) const {
-        std::vector<float> values(parameters.parameter_count);
-        std::mt19937_64 generator{seed};
-        initialize_xavier(values, parameters.patch_weight, static_cast<std::size_t>(patch_width) * shape.width, patch_width, shape.width, generator);
-        std::normal_distribution<float> small_normal{0.0F, 0.02F};
-        for (std::size_t index = parameters.class_embedding; index < parameters.class_embedding + (configuration.class_count + 1uz) * shape.width; ++index) values[index] = small_normal(generator);
-        for (std::size_t index = parameters.time_input_weight; index < parameters.time_input_weight + static_cast<std::size_t>(shape.width) * shape.width; ++index) values[index] = small_normal(generator);
-        for (std::size_t index = parameters.time_output_weight; index < parameters.time_output_weight + static_cast<std::size_t>(shape.width) * shape.width; ++index) values[index] = small_normal(generator);
-        const std::vector<float> transformer_values = transformer.initialize_parameters(seed + 1u);
-        std::ranges::copy(transformer_values, values.begin() + static_cast<std::ptrdiff_t>(parameters.transformer));
-        return values;
+    void FlowDiT::forward(const float* master, const float* input, const float* times, const std::uint32_t* labels, std::uint8_t* workspace, const FlowDiTWorkspaceLayout& l) {
+        const auto p    = [&](std::size_t offset) { return reinterpret_cast<std::uint16_t*>(workspace + offset); };
+        const auto f    = [&](std::size_t offset) { return reinterpret_cast<float*>(workspace + offset); };
+        const auto rows = l.batch * shape.sequence, images = l.batch * (shape.sequence - 2), d = configuration.width;
+        auto* tw       = workspace + l.transformer_workspace;
+        const auto& tl = l.transformer_layout;
+        tokenizer_kernels::pack(stream, master, p(l.weights), parameters.parameter_count);
+        tokenizer_kernels::pack(stream, input, p(l.patches), static_cast<std::size_t>(images) * patch_width);
+        matmul.execute({p(l.patches), p(l.weights) + parameters.patch_weight, p(l.embedded), images, d, patch_width, false, true});
+        neural::kernels::bias(stream, p(l.embedded), master + parameters.patch_bias, images, d);
+        kernels::make_tokens(stream, p(l.embedded), times, labels, master + parameters.class_embedding, master + parameters.position, reinterpret_cast<std::uint16_t*>(tw + tl.states.front()), l.batch, shape.sequence, d);
+        transformer.forward(master + parameters.transformer, p(l.weights) + parameters.transformer, tw, tl);
+        neural::kernels::normalize(stream, reinterpret_cast<const std::uint16_t*>(tw + tl.states.back()), master + parameters.final_weight, master + parameters.final_bias, p(l.normalized), f(l.means), f(l.inverse), rows, d);
+        matmul.execute({p(l.normalized), p(l.weights) + parameters.velocity_weight, p(l.full_velocity), rows, patch_width, d, false, true});
+        neural::kernels::bias(stream, p(l.full_velocity), master + parameters.velocity_bias, rows, patch_width);
+        kernels::velocity(stream, p(l.full_velocity), f(l.velocity), l.batch, shape.sequence, patch_width);
     }
-    void FlowDiT::forward(const float* const parameter_values, const float* const patches, const float* const times, const std::uint32_t* const labels, std::uint8_t* const workspace, const FlowDiTWorkspaceLayout& layout) {
-        const std::uint32_t token_count = layout.batch * shape.sequence;
-        float* tokens                   = workspace_pointer<float>(workspace, layout.tokens);
-        float* time_embedding           = workspace_pointer<float>(workspace, layout.time_embedding);
-        float* time_preactivation       = workspace_pointer<float>(workspace, layout.time_preactivation);
-        float* time_hidden              = workspace_pointer<float>(workspace, layout.time_hidden);
-        float* condition                = workspace_pointer<float>(workspace, layout.condition);
-        float* condition_activated      = workspace_pointer<float>(workspace, layout.condition_activated);
-        float* transformed              = workspace_pointer<float>(workspace, layout.transformed);
-        float* final_modulation         = workspace_pointer<float>(workspace, layout.final_modulation);
-        float* final_normalized         = workspace_pointer<float>(workspace, layout.final_normalized);
-        float* velocity                 = workspace_pointer<float>(workspace, layout.velocity);
-        matmul.execute({patches, parameter_values + parameters.patch_weight, tokens, token_count, shape.width, patch_width, false, false, neural::MatmulEpilogue::bias, parameter_values + parameters.patch_bias});
-        kernels::add_position(stream, tokens, position.data(), static_cast<std::size_t>(token_count) * shape.width, position.size());
-        kernels::make_time_embedding(stream, times, time_embedding, layout.batch, shape.width);
-        matmul.execute({time_embedding, parameter_values + parameters.time_input_weight, time_preactivation, layout.batch, shape.width, shape.width, false, false, neural::MatmulEpilogue::bias, parameter_values + parameters.time_input_bias});
-        kernels::silu_forward(stream, time_preactivation, time_hidden, static_cast<std::size_t>(layout.batch) * shape.width);
-        matmul.execute({time_hidden, parameter_values + parameters.time_output_weight, condition, layout.batch, shape.width, shape.width, false, false, neural::MatmulEpilogue::bias, parameter_values + parameters.time_output_bias});
-        kernels::make_condition(stream, condition, parameter_values + parameters.class_embedding, labels, layout.batch, shape.width);
-        kernels::silu_forward(stream, condition, condition_activated, static_cast<std::size_t>(layout.batch) * shape.width);
-        transformer.forward(parameter_values + parameters.transformer, tokens, condition_activated, transformed, workspace + layout.transformer_workspace, layout.transformer_layout);
-        matmul.execute({condition_activated, parameter_values + parameters.final_modulation_weight, final_modulation, layout.batch, 2u * shape.width, shape.width, false, false, neural::MatmulEpilogue::bias, parameter_values + parameters.final_modulation_bias});
-        kernels::final_adaln_forward(stream, transformed, final_modulation, final_normalized, workspace_pointer<float>(workspace, layout.final_means), workspace_pointer<float>(workspace, layout.final_inverse_standard_deviations), layout.batch, shape.sequence, shape.width);
-        matmul.execute({final_normalized, parameter_values + parameters.velocity_weight, velocity, token_count, patch_width, shape.width, false, false, neural::MatmulEpilogue::bias, parameter_values + parameters.velocity_bias});
-    }
-    void FlowDiT::backward(const float* const parameter_values, float* const parameter_gradients, const float* const patches, const float*, const std::uint32_t* const labels, float* const input_patch_gradient, std::uint8_t* const workspace, const FlowDiTWorkspaceLayout& layout) {
-        const std::uint32_t token_count    = layout.batch * shape.sequence;
-        const float* tokens                = workspace_pointer<float>(workspace, layout.tokens);
-        const float* time_embedding        = workspace_pointer<float>(workspace, layout.time_embedding);
-        const float* time_preactivation    = workspace_pointer<float>(workspace, layout.time_preactivation);
-        const float* time_hidden           = workspace_pointer<float>(workspace, layout.time_hidden);
-        const float* condition             = workspace_pointer<float>(workspace, layout.condition);
-        const float* condition_activated   = workspace_pointer<float>(workspace, layout.condition_activated);
-        const float* transformed           = workspace_pointer<float>(workspace, layout.transformed);
-        const float* final_modulation      = workspace_pointer<float>(workspace, layout.final_modulation);
-        const float* final_normalized      = workspace_pointer<float>(workspace, layout.final_normalized);
-        const float* velocity_gradient     = workspace_pointer<float>(workspace, layout.velocity_gradient);
-        float* normalized_gradient         = workspace_pointer<float>(workspace, layout.normalized_gradient);
-        float* transformed_gradient        = workspace_pointer<float>(workspace, layout.transformed_gradient);
-        float* final_modulation_gradient   = workspace_pointer<float>(workspace, layout.final_modulation_gradient);
-        float* condition_gradient          = workspace_pointer<float>(workspace, layout.condition_gradient);
-        float* time_hidden_gradient        = workspace_pointer<float>(workspace, layout.time_hidden_gradient);
-        float* time_preactivation_gradient = workspace_pointer<float>(workspace, layout.time_preactivation_gradient);
-        ::cuda::fill_bytes(stream, ::cuda::std::span<float>{condition_gradient, static_cast<std::size_t>(layout.batch) * shape.width}, 0u);
-        matmul.execute({final_normalized, velocity_gradient, parameter_gradients + parameters.velocity_weight, shape.width, patch_width, token_count, true, false, neural::MatmulEpilogue::bias_gradient, parameter_gradients + parameters.velocity_bias});
-        matmul.execute({velocity_gradient, parameter_values + parameters.velocity_weight, normalized_gradient, token_count, shape.width, patch_width, false, true});
-        kernels::final_adaln_backward(stream, transformed, final_modulation, normalized_gradient, workspace_pointer<float>(workspace, layout.final_means), workspace_pointer<float>(workspace, layout.final_inverse_standard_deviations), transformed_gradient, final_modulation_gradient, layout.batch, shape.sequence, shape.width);
-        matmul.execute({condition_activated, final_modulation_gradient, parameter_gradients + parameters.final_modulation_weight, shape.width, 2u * shape.width, layout.batch, true, false, neural::MatmulEpilogue::bias_gradient, parameter_gradients + parameters.final_modulation_bias});
-        matmul.execute({final_modulation_gradient, parameter_values + parameters.final_modulation_weight, condition_gradient, layout.batch, shape.width, 2u * shape.width, false, true});
-        transformer.backward(parameter_values + parameters.transformer, parameter_gradients + parameters.transformer, tokens, condition_activated, transformed_gradient, normalized_gradient, condition_gradient, workspace + layout.transformer_workspace, layout.transformer_layout);
-        kernels::silu_backward(stream, condition, condition_gradient, time_preactivation_gradient, static_cast<std::size_t>(layout.batch) * shape.width);
-        kernels::class_embedding_backward(stream, time_preactivation_gradient, labels, parameter_gradients + parameters.class_embedding, layout.batch, shape.width, configuration.class_count);
-        matmul.execute({time_hidden, time_preactivation_gradient, parameter_gradients + parameters.time_output_weight, shape.width, shape.width, layout.batch, true, false, neural::MatmulEpilogue::bias_gradient, parameter_gradients + parameters.time_output_bias});
-        matmul.execute({time_preactivation_gradient, parameter_values + parameters.time_output_weight, time_hidden_gradient, layout.batch, shape.width, shape.width, false, true});
-        kernels::silu_backward(stream, time_preactivation, time_hidden_gradient, condition_gradient, static_cast<std::size_t>(layout.batch) * shape.width);
-        matmul.execute({time_embedding, condition_gradient, parameter_gradients + parameters.time_input_weight, shape.width, shape.width, layout.batch, true, false, neural::MatmulEpilogue::bias_gradient, parameter_gradients + parameters.time_input_bias});
-        matmul.execute({patches, normalized_gradient, parameter_gradients + parameters.patch_weight, patch_width, shape.width, token_count, true, false, neural::MatmulEpilogue::bias_gradient, parameter_gradients + parameters.patch_bias});
-        matmul.execute({normalized_gradient, parameter_values + parameters.patch_weight, input_patch_gradient, token_count, patch_width, shape.width, false, true});
+    void FlowDiT::backward(const float* master, float* gradient, const std::uint32_t* labels, std::uint8_t* workspace, const FlowDiTWorkspaceLayout& l) {
+        const auto p    = [&](std::size_t offset) { return reinterpret_cast<std::uint16_t*>(workspace + offset); };
+        const auto f    = [&](std::size_t offset) { return reinterpret_cast<float*>(workspace + offset); };
+        const auto rows = l.batch * shape.sequence, images = l.batch * (shape.sequence - 2), d = configuration.width;
+        auto* tw       = workspace + l.transformer_workspace;
+        const auto& tl = l.transformer_layout;
+        kernels::velocity_backward(stream, f(l.velocity_gradient), p(l.full_gradient), l.batch, shape.sequence, patch_width);
+        matmul.execute({p(l.full_gradient), p(l.normalized), gradient + parameters.velocity_weight, patch_width, d, rows, true, false, true, 1.f});
+        neural::kernels::bias_backward(stream, p(l.full_gradient), gradient + parameters.velocity_bias, rows, patch_width);
+        matmul.execute({p(l.full_gradient), p(l.weights) + parameters.velocity_weight, p(l.norm_gradient), rows, d, patch_width});
+        neural::kernels::normalize_backward(stream, reinterpret_cast<const std::uint16_t*>(tw + tl.states.back()), p(l.norm_gradient), master + parameters.final_weight, f(l.means), f(l.inverse), reinterpret_cast<std::uint16_t*>(tw + tl.gradient), gradient + parameters.final_weight, gradient + parameters.final_bias, nullptr, rows, d);
+        transformer.backward(master + parameters.transformer, p(l.weights) + parameters.transformer, gradient + parameters.transformer, tw, tl);
+        kernels::tokens_backward(stream, reinterpret_cast<const std::uint16_t*>(tw + tl.scratch_gradient), labels, gradient + parameters.class_embedding, gradient + parameters.position, p(l.patch_gradient), l.batch, shape.sequence, d, configuration.class_count);
+        matmul.execute({p(l.patch_gradient), p(l.patches), gradient + parameters.patch_weight, d, patch_width, images, true, false, true, 1.f});
+        neural::kernels::bias_backward(stream, p(l.patch_gradient), gradient + parameters.patch_bias, images, d);
     }
 } // namespace flowdit

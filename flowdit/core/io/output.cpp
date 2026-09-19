@@ -20,37 +20,39 @@ namespace flowdit {
         else request.class_index = json.at("class").get<std::uint32_t>();
     }
     void to_json(nlohmann::json& json, const SampleInfo& info) {
-        json = {{"reconstruction", info.reconstruction}, {"checkpoint", info.checkpoint.generic_string()}, {"request", info.request}, {"source", static_cast<int>(info.source)}, {"training_step", info.training_step}, {"nfe", info.nfe}, {"model", nlohmann::json::parse(serialize_model(info.model))}, {"image", nlohmann::json::parse(serialize_image(info.image))}, {"labels", info.labels}};
+        json = {{"checkpoint", info.checkpoint.generic_string()}, {"request", info.request}, {"source", static_cast<int>(info.source)}, {"training_step", info.training_step}, {"nfe", info.nfe}, {"model", nlohmann::json::parse(serialize_model(info.model))}, {"image", nlohmann::json::parse(serialize_image(info.image))}, {"labels", info.labels}};
     }
     void from_json(const nlohmann::json& json, SampleInfo& info) {
-        info.reconstruction = json.at("reconstruction");
-        info.checkpoint     = json.at("checkpoint").get<std::string>();
-        info.request        = json.at("request").get<SamplingRequest>();
-        info.source         = static_cast<ParameterSource>(json.at("source").get<int>());
-        info.training_step  = json.at("training_step");
-        info.nfe            = json.at("nfe");
-        info.model          = deserialize_model(json.at("model").dump());
-        info.image          = deserialize_image(json.at("image").dump());
-        info.labels         = json.at("labels").get<std::vector<std::uint32_t>>();
+        info.checkpoint    = json.at("checkpoint").get<std::string>();
+        info.request       = json.at("request").get<SamplingRequest>();
+        info.source        = static_cast<ParameterSource>(json.at("source").get<int>());
+        info.training_step = json.at("training_step");
+        info.nfe           = json.at("nfe");
+        info.model         = deserialize_model(json.at("model").dump());
+        info.image         = deserialize_image(json.at("image").dump());
+        info.labels        = json.at("labels").get<std::vector<std::uint32_t>>();
     }
 } // namespace flowdit
 namespace flowdit::output {
-    void write_configuration(const RunConfiguration& configuration) {
+    std::string serialize_configuration(const RunConfiguration& configuration) {
         const auto& optimizer = configuration.optimizer;
-        const nlohmann::json json{{"stage", static_cast<int>(configuration.stage)}, {"autoencoder", nlohmann::json::parse(serialize_autoencoder(configuration.autoencoder))}, {"autoencoder_checkpoint", configuration.autoencoder_checkpoint.generic_string()}, {"log_interval", configuration.log_interval}, {"preview_interval", configuration.preview_interval}, {"save_interval", configuration.save_interval}, {"dataset", configuration.dataset.generic_string()}, {"model", nlohmann::json::parse(serialize_model(configuration.model))}, {"image", nlohmann::json::parse(serialize_image(configuration.image))}, {"batch", configuration.batch}, {"horizontal_flip", configuration.horizontal_flip}, {"preview", configuration.preview}, {"end_step", configuration.end_step}, {"seed", configuration.seed},
-            {"optimizer", {{"learning_rate", optimizer.learning_rate}, {"first_decay", optimizer.first_decay}, {"second_decay", optimizer.second_decay}, {"epsilon", optimizer.epsilon}, {"weight_decay", optimizer.weight_decay}, {"ema_half_life", optimizer.exponential_average.half_life_samples}, {"ema_ramp", optimizer.exponential_average.ramp_up_ratio}}}};
+        const nlohmann::json json{{"format", "usit-dcae-v1"}, {"tokenizer", nlohmann::json::parse(serialize_tokenizer(configuration.tokenizer))}, {"accumulation", configuration.accumulation}, {"log_interval", configuration.log_interval}, {"preview_interval", configuration.preview_interval}, {"save_interval", configuration.save_interval}, {"dataset", configuration.dataset.generic_string()}, {"model", nlohmann::json::parse(serialize_model(configuration.model))}, {"image", nlohmann::json::parse(serialize_image(configuration.image))}, {"batch", configuration.batch}, {"horizontal_flip", configuration.horizontal_flip}, {"preview", configuration.preview}, {"end_step", configuration.end_step}, {"seed", configuration.seed},
+            {"optimizer", {{"learning_rate", optimizer.learning_rate}, {"first_decay", optimizer.first_decay}, {"second_decay", optimizer.second_decay}, {"epsilon", optimizer.epsilon}, {"weight_decay", optimizer.weight_decay}, {"warmup_steps", optimizer.warmup_steps}, {"ema_half_life", optimizer.exponential_average.half_life_samples}, {"ema_ramp", optimizer.exponential_average.ramp_up_ratio}}}};
+        return json.dump(2);
+    }
+    void write_configuration(const RunConfiguration& configuration) {
         std::ofstream file{configuration.output / "run.json"};
         file.exceptions(std::ios::failbit | std::ios::badbit);
-        file << json.dump(2) << '\n';
+        file << serialize_configuration(configuration) << '\n';
     }
     RunConfiguration read_configuration(const std::filesystem::path& directory) {
         std::ifstream file{directory / "run.json"};
         file.exceptions(std::ios::failbit | std::ios::badbit);
         const auto json = nlohmann::json::parse(file);
         RunConfiguration result;
-        result.stage                                           = static_cast<TrainingStage>(json.at("stage").get<int>());
-        result.autoencoder                                     = deserialize_autoencoder(json.at("autoencoder").dump());
-        result.autoencoder_checkpoint                          = json.at("autoencoder_checkpoint").get<std::string>();
+        if (json.at("format") != "usit-dcae-v1") throw std::runtime_error{"Unsupported run format"};
+        result.tokenizer                                       = deserialize_tokenizer(json.at("tokenizer").dump());
+        result.accumulation                                    = json.at("accumulation");
         result.log_interval                                    = json.at("log_interval");
         result.preview_interval                                = json.at("preview_interval");
         result.save_interval                                   = json.at("save_interval");
@@ -69,6 +71,7 @@ namespace flowdit::output {
         result.optimizer.second_decay                          = optimizer.at("second_decay");
         result.optimizer.epsilon                               = optimizer.at("epsilon");
         result.optimizer.weight_decay                          = optimizer.at("weight_decay");
+        result.optimizer.warmup_steps                          = optimizer.at("warmup_steps");
         result.optimizer.exponential_average.half_life_samples = optimizer.at("ema_half_life");
         result.optimizer.exponential_average.ramp_up_ratio     = optimizer.at("ema_ramp");
         return result;
@@ -76,7 +79,7 @@ namespace flowdit::output {
     void write_sample(const SampleOutput& sample) {
         const auto& image             = sample.info.image;
         const std::size_t image_bytes = static_cast<std::size_t>(image.width) * image.height * 4uz;
-        const std::uint32_t columns   = std::min(static_cast<std::uint32_t>(sample.info.labels.size()), sample.info.reconstruction ? 2u : 10u);
+        const std::uint32_t columns   = std::min(static_cast<std::uint32_t>(sample.info.labels.size()), 10u);
         const std::uint32_t width     = columns * image.width;
         const std::uint32_t height    = static_cast<std::uint32_t>((sample.info.labels.size() + columns - 1u) / columns) * image.height;
         std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 4uz);
@@ -106,7 +109,7 @@ namespace flowdit::output {
         const auto& image             = result.info.image;
         const std::size_t image_bytes = static_cast<std::size_t>(image.width) * image.height * 4uz;
         result.rgba.resize(result.info.labels.size() * image_bytes);
-        const std::size_t columns = std::min(result.info.labels.size(), result.info.reconstruction ? 2uz : 10uz);
+        const std::size_t columns = std::min(result.info.labels.size(), 10uz);
         for (std::size_t index = 0; index < result.info.labels.size(); ++index)
             for (std::size_t y = 0; y < image.height; ++y) std::memcpy(result.rgba.data() + index * image_bytes + y * image.width * 4uz, pixels.get() + ((index / columns * image.height + y) * width + index % columns * image.width) * 4uz, image.width * 4uz);
         return result;
@@ -124,7 +127,6 @@ namespace flowdit::output {
             std::istringstream row{line};
             TrainingRecord record;
             row >> record.step >> record.loss >> record.samples_per_second >> record.training_seconds;
-            for (auto& value : record.components) row >> value;
             result.metrics.push_back(record);
         }
         if (!std::filesystem::exists(directory / "samples")) return result;

@@ -4,67 +4,41 @@ module;
 export module flowdit.neural.matmul;
 import std;
 export namespace flowdit::neural {
-    enum class MatmulEpilogue : std::uint8_t {
-        none,
-        bias,
-        gelu_aux_bias,
-        gelu_gradient,
-        bias_gradient,
-    };
-    struct MatmulRequest final {
-        const float* a;
-        const float* b;
-        float* output;
-        std::uint32_t rows;
-        std::uint32_t columns;
-        std::uint32_t reduction;
-        bool transpose_a{};
-        bool transpose_b{};
-        MatmulEpilogue epilogue{MatmulEpilogue::none};
-        const float* bias{};
-        float beta{};
-        const float* auxiliary{};
-    };
     struct MatmulRuntimeConfiguration final {
         std::size_t workspace_byte_count;
     };
+    struct MatmulRequest final {
+        const std::uint16_t* a;
+        const std::uint16_t* b;
+        void* output;
+        std::uint32_t rows, columns, reduction;
+        bool transpose_a{}, transpose_b{}, float_output{};
+        float beta{};
+    };
     struct MatmulRuntime final {
         struct PlanKey final {
-            std::uint32_t rows;
-            std::uint32_t columns;
-            std::uint32_t reduction;
-            bool transpose_a;
-            bool transpose_b;
-            MatmulEpilogue epilogue;
+            std::uint32_t rows, columns, reduction;
+            bool transpose_a, transpose_b, float_output;
             bool operator==(const PlanKey&) const = default;
         };
         struct Plan final {
             PlanKey key;
             cublasLtMatmulDesc_t operation{};
-            cublasLtMatrixLayout_t a_layout{};
-            cublasLtMatrixLayout_t b_layout{};
-            cublasLtMatrixLayout_t output_layout{};
+            cublasLtMatrixLayout_t a{}, b{}, output{};
             cublasLtMatmulAlgo_t algorithm{};
-            std::vector<cublasLtMatmulAlgo_t> candidates;
-            bool tuned{};
-            Plan(cublasLtHandle_t handle, const PlanKey& key, const float* bias, const float* auxiliary, std::size_t workspace_byte_count, int multiprocessor_count);
-            ~Plan() noexcept;
+            Plan(cublasLtHandle_t handle, PlanKey key, std::size_t workspace);
+            ~Plan();
             Plan(const Plan&)            = delete;
             Plan& operator=(const Plan&) = delete;
-            Plan(Plan&&)                 = delete;
-            Plan& operator=(Plan&&)      = delete;
         };
         ::cuda::stream_ref stream;
-        const MatmulRuntimeConfiguration configuration;
         cublasLtHandle_t handle{};
         ::cuda::device_buffer<std::uint8_t> workspace;
         std::list<Plan> plans;
         MatmulRuntime(::cuda::stream_ref stream, MatmulRuntimeConfiguration configuration);
-        ~MatmulRuntime() noexcept;
+        ~MatmulRuntime();
         MatmulRuntime(const MatmulRuntime&)            = delete;
         MatmulRuntime& operator=(const MatmulRuntime&) = delete;
-        MatmulRuntime(MatmulRuntime&&)                 = delete;
-        MatmulRuntime& operator=(MatmulRuntime&&)      = delete;
         void execute(const MatmulRequest& request);
     };
 } // namespace flowdit::neural

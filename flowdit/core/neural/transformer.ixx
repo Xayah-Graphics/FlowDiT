@@ -3,72 +3,42 @@ module;
 export module flowdit.neural.transformer;
 import std;
 import flowdit.neural.matmul;
+import flowdit.neural.attention;
 export namespace flowdit::neural {
     struct TransformerConfiguration final {
-        std::uint32_t sequence;
-        std::uint32_t width;
-        std::uint32_t block_count;
-        std::uint32_t head_count;
-        std::uint32_t mlp_width;
-        bool operator==(const TransformerConfiguration&) const = default;
+        std::uint32_t sequence, width, heads, side_blocks, mlp_width;
     };
-    struct TransformerBlockParameterLayout final {
-        std::size_t modulation_weight;
-        std::size_t modulation_bias;
-        std::size_t qkv_weight;
-        std::size_t qkv_bias;
-        std::size_t attention_output_weight;
-        std::size_t attention_output_bias;
-        std::size_t mlp_input_weight;
-        std::size_t mlp_input_bias;
-        std::size_t mlp_output_weight;
-        std::size_t mlp_output_bias;
+    struct TransformerBlockLayout final {
+        std::size_t norm1_weight, norm1_bias, qkv, projection, projection_bias, norm2_weight, norm2_bias, mlp1, mlp1_bias, mlp2, mlp2_bias, skip, skip_bias;
     };
     struct TransformerParameterLayout final {
-        TransformerConfiguration configuration;
-        std::vector<TransformerBlockParameterLayout> blocks;
-        std::size_t parameter_count;
-        explicit TransformerParameterLayout(const TransformerConfiguration& configuration);
-    };
-    struct TransformerBlockWorkspaceLayout final {
-        std::size_t modulation;
-        std::size_t attention_normalized;
-        std::size_t attention_means;
-        std::size_t attention_inverse_standard_deviations;
-        std::size_t qkv;
-        std::size_t attention;
-        std::size_t attention_log_sum_exp;
-        std::size_t attention_projected;
-        std::size_t after_attention;
-        std::size_t mlp_normalized;
-        std::size_t mlp_means;
-        std::size_t mlp_inverse_standard_deviations;
-        std::size_t mlp_preactivation;
-        std::size_t mlp_hidden;
-        std::size_t mlp_projected;
-        std::size_t output;
+        std::vector<TransformerBlockLayout> blocks;
+        std::size_t count{};
+        explicit TransformerParameterLayout(TransformerConfiguration configuration);
     };
     struct TransformerWorkspaceLayout final {
-        TransformerConfiguration configuration;
         std::uint32_t batch;
-        std::vector<TransformerBlockWorkspaceLayout> blocks;
-        std::size_t gradient_a;
-        std::size_t gradient_b;
-        std::size_t branch_gradient;
-        std::size_t normalized_gradient;
-        std::size_t modulation_gradient;
-        std::size_t qkv_gradient;
-        std::size_t attention_delta;
-        std::size_t mlp_preactivation_gradient;
-        std::size_t byte_count;
-        TransformerWorkspaceLayout(const TransformerConfiguration& configuration, std::uint32_t batch);
+        bool training;
+        std::vector<std::size_t> states;
+        std::size_t concatenated, projected, norm1, qkv, attended, attention_residual, norm2, mlp, activated, temporary;
+        std::size_t mean1, inverse1, mean2, inverse2, statistics;
+        std::size_t gradient, scratch_gradient, skip_gradients, d1, d2, dqkv, dmlp;
+        std::size_t byte_count{};
+        TransformerWorkspaceLayout(std::uint32_t batch, TransformerConfiguration configuration, bool training);
     };
     struct Transformer final {
+        ::cuda::stream_ref stream;
         MatmulRuntime& matmul;
+        TransformerConfiguration configuration;
         TransformerParameterLayout parameters;
-        Transformer(MatmulRuntime& matmul, const TransformerConfiguration& configuration);
-        std::vector<float> initialize_parameters(std::uint64_t seed) const;
-        void forward(const float* parameter_values, const float* tokens, const float* condition, float* output, std::uint8_t* workspace, const TransformerWorkspaceLayout& workspace_layout);
-        void backward(const float* parameter_values, float* parameter_gradients, const float* tokens, const float* condition, const float* output_gradient, float* token_gradient, float* condition_gradient, std::uint8_t* workspace, const TransformerWorkspaceLayout& workspace_layout);
+        std::list<Attention> attention;
+        Transformer(::cuda::stream_ref stream, MatmulRuntime& matmul, TransformerConfiguration configuration);
+        void initialize(std::span<float> values, std::mt19937_64& random) const;
+        void forward(const float* master, const std::uint16_t* weights, std::uint8_t* workspace, const TransformerWorkspaceLayout& layout);
+        void backward(const float* master, const std::uint16_t* weights, float* gradient, std::uint8_t* workspace, const TransformerWorkspaceLayout& layout);
+
+    private:
+        const std::uint16_t* block_forward(std::uint32_t index, const float* master, const std::uint16_t* weights, std::uint16_t* output, std::uint8_t* workspace, const TransformerWorkspaceLayout& layout, Attention& attention);
+        void linear_backward(const std::uint16_t* input, const std::uint16_t* gradient, std::uint16_t* input_gradient, const std::uint16_t* weight, float* weight_gradient, float* bias_gradient, std::uint32_t rows, std::uint32_t in, std::uint32_t out);
     };
 } // namespace flowdit::neural

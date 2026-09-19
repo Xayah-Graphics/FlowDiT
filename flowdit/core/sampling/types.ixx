@@ -13,7 +13,7 @@ export namespace flowdit {
     };
     struct SamplingRequest final {
         SamplingSolver solver{SamplingSolver::heun};
-        std::uint32_t step_count{25u}, count{100u};
+        std::uint32_t step_count{50u}, count{100u};
         std::uint32_t first_sample{};
         float guidance{2.0F};
         std::uint64_t seed{42u};

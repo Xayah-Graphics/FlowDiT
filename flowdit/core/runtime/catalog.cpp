@@ -12,6 +12,8 @@ namespace flowdit {
             dataset.directory = folder.path();
             try {
                 dataset.info = inspect_dataset(folder.path());
+                if (key != "afhq_v2") dataset.training_error = "Training is currently available for AFHQ-512 only.";
+                else if (dataset.info && (dataset.info->specification.width != 512 || dataset.info->specification.height != 512 || dataset.info->specification.channels != 3)) dataset.training_error = "AFHQ training requires 512 x 512 RGB images.";
                 if (dataset.info) refresh(dataset);
             } catch (const std::exception& failure) {
                 dataset.error = failure.what();
@@ -46,11 +48,9 @@ namespace flowdit {
                     auto& checkpoint = *found;
                     checkpoint       = {.path = path};
                     try {
-                        const auto file   = serialization::safetensors::read(path, std::array<std::string_view, 1>{"training.state"});
-                        checkpoint.stage  = run.configuration.stage;
-                        const auto system = checkpoint.stage == TrainingStage::autoencoder ? "autoencoder-kl" : "latent-flow-matching";
-                        if (file.metadata.at("flowdit.system") != system) throw std::runtime_error{"Unsupported checkpoint format"};
-                        if (checkpoint.stage == TrainingStage::flowdit) checkpoint.model = deserialize_model(file.metadata.at("flowdit.model"));
+                        const auto file = serialization::safetensors::read(path, std::array<std::string_view, 1>{"training.state"});
+                        if (file.metadata.at("flowdit.system") != "usit-dcae-v1") throw std::runtime_error{"Unsupported checkpoint format"};
+                        checkpoint.model = deserialize_model(file.metadata.at("flowdit.model"));
                         checkpoint.image = deserialize_image(file.metadata.at("flowdit.image"));
                         std::array<std::uint64_t, 4> state;
                         std::memcpy(state.data(), file.tensors.front().data.data(), sizeof(state));
@@ -67,8 +67,9 @@ namespace flowdit {
             }
         }
     }
-    RunConfiguration Catalog::training(const DatasetEntry& dataset, const TrainingStage stage) const {
-        auto result    = training_configuration(dataset.info->specification, stage);
+    RunConfiguration Catalog::training(const DatasetEntry& dataset) const {
+        if (!dataset.training_error.empty()) throw std::runtime_error{dataset.training_error};
+        auto result    = training_configuration(dataset.info->specification);
         result.dataset = dataset.directory;
         result.output  = dataset.directory / ".flowdit" / "runs" / std::format("{:%Y%m%d-%H%M%S}", std::chrono::floor<std::chrono::microseconds>(std::chrono::system_clock::now()));
         return result;

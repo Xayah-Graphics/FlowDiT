@@ -46,7 +46,7 @@ namespace flowdit::kernels {
                 }
             }
         }
-        __global__ void flow_matching_sample_loss_kernel(const float* const prediction, const float* const target, float* const prediction_gradient, float* const sample_loss, const std::uint32_t sample_elements) {
+        __global__ void flow_matching_sample_loss_kernel(const float* const prediction, const float* const target, float* const prediction_gradient, float* const sample_loss, const std::uint32_t sample_elements, const float gradient_scale) {
             __shared__ float reduction[thread_count];
             const std::uint32_t sample = blockIdx.x;
             float loss{};
@@ -54,7 +54,7 @@ namespace flowdit::kernels {
                 const std::size_t index    = static_cast<std::size_t>(sample) * sample_elements + element;
                 const float difference     = prediction[index] - target[index];
                 loss                       = fmaf(difference, difference, loss);
-                prediction_gradient[index] = 2.0F * difference / static_cast<float>(gridDim.x * sample_elements);
+                prediction_gradient[index] = gradient_scale * 2.0F * difference / static_cast<float>(gridDim.x * sample_elements);
             }
             reduction[threadIdx.x] = loss;
             __syncthreads();
@@ -84,8 +84,8 @@ namespace flowdit::kernels {
     void make_training_batch(const ::cuda::stream_ref stream, const float* const data, const std::uint32_t* const input_labels, float* const path, float* const target, float* const times, std::uint32_t* const labels, const std::uint64_t* const step, const std::uint64_t* const seed, const std::uint32_t batch, const TensorLayout image, const std::uint32_t class_count) {
         ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(batch), ::cuda::block_dims(thread_count))), make_training_batch_kernel, data, input_labels, path, target, times, labels, step, seed, batch, image, class_count);
     }
-    void flow_matching_loss(const ::cuda::stream_ref stream, const float* const prediction, const float* const target, float* const prediction_gradient, float* const sample_loss, float* const loss, const std::uint32_t batch, const std::uint32_t sample_elements) {
-        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(batch), ::cuda::block_dims(thread_count))), flow_matching_sample_loss_kernel, prediction, target, prediction_gradient, sample_loss, sample_elements);
+    void flow_matching_loss(const ::cuda::stream_ref stream, const float* const prediction, const float* const target, float* const prediction_gradient, float* const sample_loss, float* const loss, const std::uint32_t batch, const std::uint32_t sample_elements, const float gradient_scale) {
+        ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(batch), ::cuda::block_dims(thread_count))), flow_matching_sample_loss_kernel, prediction, target, prediction_gradient, sample_loss, sample_elements, gradient_scale);
         ::cuda::launch(stream, ::cuda::make_config(::cuda::make_hierarchy(::cuda::grid_dims(1u), ::cuda::block_dims(thread_count))), flow_matching_loss_kernel, sample_loss, loss, batch, sample_elements);
     }
     void advance_training_state(const ::cuda::stream_ref stream, std::uint64_t* const step, std::uint64_t* const processed_samples, const std::uint32_t samples_per_step) {

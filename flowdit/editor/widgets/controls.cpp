@@ -60,10 +60,4 @@ namespace flowdit::editor {
     std::string run_label(const std::string_view name) {
         return std::format("{}-{} · {}:{}", name.substr(4, 2), name.substr(6, 2), name.substr(9, 2), name.substr(11, 2));
     }
-    std::string checkpoint_label(const std::filesystem::path& path) {
-        const auto name = path.stem().string();
-        std::uint64_t step{};
-        std::from_chars(name.data() + 5, name.data() + name.size(), step);
-        return std::format("{} · Step {}", run_label(path.parent_path().parent_path().filename().string()), step);
-    }
 } // namespace flowdit::editor

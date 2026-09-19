@@ -9,10 +9,11 @@ export namespace flowdit::neural {
     };
     struct TrainingConfiguration final {
         float learning_rate{1.0e-4F};
-        float first_decay{0.9F};
-        float second_decay{0.999F};
+        float first_decay{0.99F};
+        float second_decay{0.99F};
         float epsilon{1.0e-8F};
         float weight_decay{};
+        std::uint32_t warmup_steps{1'000};
         ExponentialAverageConfiguration exponential_average;
     };
     struct ParameterState final {
@@ -29,7 +30,7 @@ export namespace flowdit::neural {
         ::cuda::device_buffer<float> second_moments;
         ::cuda::device_buffer<float> ema;
         ::cuda::device_buffer<float> step_scalars;
-        ParameterBuffer(::cuda::stream_ref stream, std::size_t count, bool average = true);
+        ParameterBuffer(::cuda::stream_ref stream, std::size_t count);
         void initialize(std::span<const float> values);
         void clear_gradients();
         void step(const TrainingConfiguration& configuration, const std::uint64_t* step, const std::uint64_t* processed_samples, std::uint32_t samples_per_step);

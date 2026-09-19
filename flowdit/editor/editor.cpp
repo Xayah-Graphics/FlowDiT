@@ -207,11 +207,11 @@ namespace flowdit::editor {
                         const auto& image = dataset.dataset->specification;
                         ImGui::TextDisabled("%zu images · %u × %u · %s", dataset.dataset->labels.size(), image.width, image.height, image.channels == 1 ? "Grayscale" : "RGB");
                     } else ImGui::TextDisabled(dataset.loading.valid() ? "Loading images…" : "Dataset could not be loaded");
-                    for (const auto stage : {TrainingStage::autoencoder, TrainingStage::flowdit}) {
+                    {
                         std::size_t runs{}, checkpoints{};
                         std::optional<std::uint64_t> latest;
                         for (const auto& history : entry.runs | std::views::values) {
-                            if (!history.error.empty() || history.configuration.stage != stage) continue;
+                            if (!history.error.empty()) continue;
                             ++runs;
                             for (const auto& checkpoint : history.checkpoints) {
                                 if (!checkpoint.error.empty()) continue;
@@ -219,7 +219,7 @@ namespace flowdit::editor {
                                 if (!latest) latest = checkpoint.step;
                             }
                         }
-                        const auto name    = stage == TrainingStage::autoencoder ? "Autoencoder" : "FlowDiT";
+                        const auto name    = "USiT";
                         const auto summary = std::format("{} · {} run{} · {} checkpoint{}", name, runs, runs == 1 ? "" : "s", checkpoints, checkpoints == 1 ? "" : "s");
                         const auto detail  = latest ? std::format(" · latest step {}", *latest) : runs ? " · No checkpoint yet" : " · Not trained";
                         ImGui::TextColored(latest ? ImVec4{0.44F, 0.80F, 0.87F, 1} : ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled), "%s%s", summary.c_str(), detail.c_str());

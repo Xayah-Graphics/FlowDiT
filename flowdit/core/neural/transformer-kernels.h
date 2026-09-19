@@ -1,14 +1,17 @@
-#ifndef FLOWDIT_NEURAL_TRANSFORMER_KERNELS_H
-#define FLOWDIT_NEURAL_TRANSFORMER_KERNELS_H
+#ifndef FLOWDIT_TRANSFORMER_KERNELS_H
+#define FLOWDIT_TRANSFORMER_KERNELS_H
 #include <cstddef>
 #include <cstdint>
 #include <flowdit/cuda_stream.h>
 namespace flowdit::neural::kernels {
-    void adaln_forward(::cuda::stream_ref stream, const float* input, const float* modulation, float* output, float* means, float* inverse_standard_deviations, std::uint32_t batch, std::uint32_t sequence, std::uint32_t width, std::uint32_t modulation_group);
-    void residual_forward(::cuda::stream_ref stream, const float* input, const float* branch, const float* modulation, float* output, std::uint32_t batch, std::uint32_t sequence, std::uint32_t width, std::uint32_t modulation_group);
-    void residual_backward(::cuda::stream_ref stream, const float* output_gradient, const float* branch, const float* modulation, float* branch_gradient, float* modulation_gradient, std::uint32_t batch, std::uint32_t sequence, std::uint32_t width, std::uint32_t modulation_group);
-    void adaln_backward(::cuda::stream_ref stream, const float* input, const float* modulation, const float* output_gradient, const float* residual_gradient, const float* means, const float* inverse_standard_deviations, float* input_gradient, float* modulation_gradient, std::uint32_t batch, std::uint32_t sequence, std::uint32_t width, std::uint32_t modulation_group);
-    void sdpa_forward(::cuda::stream_ref stream, const float* qkv, float* output, float* log_sum_exp, std::uint32_t batch, std::uint32_t sequence, std::uint32_t width, std::uint32_t head_count);
-    void sdpa_backward(::cuda::stream_ref stream, const float* qkv, const float* output, const float* output_gradient, const float* log_sum_exp, float* delta, float* qkv_gradient, std::uint32_t batch, std::uint32_t sequence, std::uint32_t width, std::uint32_t head_count);
+    void normalize(::cuda::stream_ref s, const std::uint16_t* x, const float* weight, const float* bias, std::uint16_t* y, float* mean, float* inverse, std::uint32_t rows, std::uint32_t width);
+    void normalize_backward(::cuda::stream_ref s, const std::uint16_t* x, const std::uint16_t* dy, const float* weight, const float* mean, const float* inverse, std::uint16_t* dx, float* dw, float* db, const std::uint16_t* residual, std::uint32_t rows, std::uint32_t width);
+    void bias(::cuda::stream_ref s, std::uint16_t* x, const float* bias, std::uint32_t rows, std::uint32_t width);
+    void bias_backward(::cuda::stream_ref s, const std::uint16_t* dy, float* db, std::uint32_t rows, std::uint32_t width);
+    void gelu(::cuda::stream_ref s, const std::uint16_t* x, std::uint16_t* y, std::size_t count);
+    void gelu_backward(::cuda::stream_ref s, const std::uint16_t* x, std::uint16_t* gradient, std::size_t count);
+    void add(::cuda::stream_ref s, const std::uint16_t* a, const std::uint16_t* b, std::uint16_t* output, std::size_t count);
+    void concatenate(::cuda::stream_ref s, const std::uint16_t* a, const std::uint16_t* b, std::uint16_t* output, std::uint32_t rows, std::uint32_t width);
+    void split(::cuda::stream_ref s, const std::uint16_t* input, std::uint16_t* a, std::uint16_t* b, std::uint32_t rows, std::uint32_t width);
 } // namespace flowdit::neural::kernels
 #endif

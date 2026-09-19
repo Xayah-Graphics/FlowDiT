@@ -8,7 +8,7 @@ export namespace flowdit {
     ImageSpecification deserialize_image(std::string_view text);
     struct ImageTransfer final {
         ImageTransfer(::cuda::stream_ref stream, TensorShape shape, std::uint32_t batch);
-        TensorBatch encode(const ImageBatch& images, bool horizontal_flip, std::uint64_t seed, std::uint64_t step);
+        const float* encode(const ImageBatch& images);
         const std::uint8_t* decode(const TensorBatch& tensor);
 
     private:
@@ -16,7 +16,6 @@ export namespace flowdit {
         TensorShape shape;
         std::uint32_t batch;
         std::optional<::cuda::device_buffer<std::uint8_t>> images;
-        std::optional<::cuda::device_buffer<std::uint32_t>> labels;
         std::optional<::cuda::device_buffer<float>> values;
         std::optional<::cuda::device_buffer<std::uint8_t>> rgba;
     };

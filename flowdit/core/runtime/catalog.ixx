@@ -6,7 +6,6 @@ export namespace flowdit {
     struct CheckpointEntry final {
         std::filesystem::path path;
         ModelConfiguration model;
-        TrainingStage stage{TrainingStage::autoencoder};
         ImageSpecification image;
         std::uint64_t step{}, seed{};
         double training_seconds{};
@@ -20,6 +19,7 @@ export namespace flowdit {
     struct DatasetEntry final {
         std::filesystem::path directory;
         std::optional<DatasetInfo> info;
+        std::string training_error;
         std::string error;
         std::map<std::string, RunEntry, std::greater<>> runs;
     };
@@ -28,7 +28,7 @@ export namespace flowdit {
         std::map<std::string, DatasetEntry> datasets;
         void scan();
         void refresh(DatasetEntry& dataset, const std::filesystem::path& changed = {});
-        RunConfiguration training(const DatasetEntry& dataset, TrainingStage stage = TrainingStage::autoencoder) const;
+        RunConfiguration training(const DatasetEntry& dataset) const;
         std::filesystem::path inference(const RunEntry& run) const;
     };
 } // namespace flowdit

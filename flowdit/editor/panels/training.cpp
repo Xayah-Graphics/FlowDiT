@@ -18,9 +18,11 @@ namespace flowdit::editor {
         elapsed_base  = 0;
         first_step    = 0;
         run           = std::move(name);
-        configuration = catalog.training(dataset);
-        if (run.empty()) return;
+        configuration = {};
         try {
+            if (!dataset.training_error.empty()) return;
+            configuration = catalog.training(dataset);
+            if (run.empty()) return;
             const auto& entry = dataset.runs.at(run);
             if (!entry.error.empty()) throw std::runtime_error{entry.error};
             configuration      = entry.configuration;
@@ -51,39 +53,30 @@ namespace flowdit::editor {
         progress = update.status;
         metrics.insert(metrics.end(), update.metrics.begin(), update.metrics.end());
         for (const auto& sample : update.samples) {
-            if ((!sample->info.training_step && !sample->info.reconstruction) || sample->info.source != ParameterSource::exponential_average) continue;
+            if (!sample->info.training_step || sample->info.source != ParameterSource::exponential_average) continue;
             preview = sample->info;
             picture.upload(renderer, sample->info.image, sample->info.labels, sample->rgba.data());
         }
     }
     bool TrainingPanel::draw(Renderer& renderer, Session& session, SessionStatus& status, const Catalog& catalog, const DatasetEntry& entry, const std::shared_ptr<const Dataset>& dataset) {
         bool show{};
+        if (!entry.training_error.empty()) {
+            ImGui::TextWrapped("%s", entry.training_error.c_str());
+            return false;
+        }
+        ImGui::TextDisabled("%s · Frozen", configuration.tokenizer.model.c_str());
+        ImGui::TextDisabled("%u x %u RGB → %u x %u x %u", configuration.image.width, configuration.image.height, configuration.model.shape.width, configuration.model.shape.height, configuration.model.shape.channels);
         const bool running = status.busy && status.mode == Mode::training;
         ImGui::BeginDisabled(status.busy);
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextDisabled("Stage");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::BeginCombo("##stage", configuration.stage == TrainingStage::autoencoder ? "Autoencoder" : "FlowDiT")) {
-            for (const auto stage : {TrainingStage::autoencoder, TrainingStage::flowdit})
-                if (ImGui::Selectable(stage == TrainingStage::autoencoder ? "Autoencoder" : "FlowDiT", configuration.stage == stage)) {
-                    select(renderer, catalog, entry);
-                    configuration = catalog.training(entry, stage);
-                }
-            ImGui::EndCombo();
-        }
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("Run");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(-1);
         if (ImGui::BeginCombo("##run", run.empty() ? "New training" : run_label(run).c_str())) {
             if (ImGui::Selectable("New training", run.empty())) {
-                const auto stage = configuration.stage;
                 select(renderer, catalog, entry);
-                configuration = catalog.training(entry, stage);
             }
             for (const auto& [name, history] : entry.runs) {
-                if (history.configuration.stage != configuration.stage) continue;
                 auto checkpoints  = history.checkpoints | std::views::filter([](const CheckpointEntry& checkpoint) { return checkpoint.error.empty(); });
                 const auto count  = std::ranges::distance(checkpoints);
                 const auto step   = count ? checkpoints.front().step : 0;
@@ -93,26 +86,6 @@ namespace flowdit::editor {
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", name.c_str());
             }
             ImGui::EndCombo();
-        }
-        if (configuration.stage == TrainingStage::flowdit) {
-            ImGui::BeginDisabled(!run.empty());
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextDisabled("Autoencoder");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(-1);
-            const auto selected = configuration.autoencoder_checkpoint.empty() ? std::string{"Select checkpoint"} : checkpoint_label(configuration.autoencoder_checkpoint);
-            if (ImGui::BeginCombo("##autoencoder", selected.c_str())) {
-                for (const auto& history : entry.runs | std::views::values) {
-                    if (!history.error.empty() || history.configuration.stage != TrainingStage::autoencoder) continue;
-                    for (const auto& checkpoint : history.checkpoints) {
-                        if (!checkpoint.error.empty()) continue;
-                        const auto path = std::filesystem::relative(checkpoint.path, entry.directory);
-                        if (ImGui::Selectable((checkpoint_label(path) + "##" + path.generic_string()).c_str(), path == configuration.autoencoder_checkpoint)) configuration.autoencoder_checkpoint = path;
-                    }
-                }
-                ImGui::EndCombo();
-            }
-            ImGui::EndDisabled();
         }
         ImGui::EndDisabled();
         ImGui::Spacing();
@@ -147,13 +120,13 @@ namespace flowdit::editor {
             ImGui::EndDisabled();
         } else {
             const bool resumable = !run.empty() && entry.runs.contains(run) && !entry.runs.at(run).checkpoints.empty();
-            ImGui::BeginDisabled(status.busy || !dataset || !error.empty() || (configuration.stage == TrainingStage::flowdit && configuration.autoencoder_checkpoint.empty()) || (!run.empty() && !resumable) || (!run.empty() && configuration.end_step <= progress.training.step));
+            ImGui::BeginDisabled(status.busy || !dataset || !error.empty() || (!run.empty() && !resumable) || (!run.empty() && configuration.end_step <= progress.training.step));
             if (ImGui::Button(run.empty() ? "Start training" : "Continue training", {-1, 0})) {
                 std::filesystem::path checkpoint;
                 first_step   = 0;
                 elapsed_base = 0;
                 if (run.empty()) {
-                    configuration.output = catalog.training(entry, configuration.stage).output;
+                    configuration.output = catalog.training(entry).output;
                     run                  = configuration.output.filename().string();
                 } else {
                     const auto& latest = entry.runs.at(run).checkpoints.front();
@@ -172,7 +145,7 @@ namespace flowdit::editor {
         }
         if (!metrics.empty()) {
             ImGui::Spacing();
-            ImGui::TextDisabled(configuration.stage == TrainingStage::autoencoder ? "Reconstruction / %.4f" : "Flow matching / %.4f", metrics.back().loss);
+            ImGui::TextDisabled("Flow matching / %.4f", metrics.back().loss);
             ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4{});
             ImGui::PlotLines("##loss", [](void* data, const int index) { return static_cast<float>(static_cast<const TrainingRecord*>(data)[index].loss); }, metrics.data(), static_cast<int>(metrics.size()), 0, nullptr, std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), {-1, 60 * renderer.dpi});
             ImGui::PopStyleColor();
@@ -190,14 +163,12 @@ namespace flowdit::editor {
         ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4{});
         if (ImGui::CollapsingHeader("Parameters")) {
-            ImGui::BeginDisabled(status.busy);
+            ImGui::BeginDisabled(status.busy || !run.empty());
             number_field("Batch", ImGuiDataType_U32, &configuration.batch, nullptr, true);
-            if (configuration.stage == TrainingStage::autoencoder) number_field("Accumulate", ImGuiDataType_U32, &configuration.autoencoder.accumulation, nullptr, true);
+            number_field("Accumulate", ImGuiDataType_U32, &configuration.accumulation, nullptr, true);
             number_field("Learning rate", ImGuiDataType_Float, &configuration.optimizer.learning_rate, "%.4g", true);
-            ImGui::BeginDisabled(!run.empty());
             number_field("Seed", ImGuiDataType_U64, &configuration.seed, nullptr, true);
             if (!run.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("Restored from checkpoint");
-            ImGui::EndDisabled();
             ImGui::EndDisabled();
         }
         ImGui::PopStyleColor();
@@ -214,6 +185,6 @@ namespace flowdit::editor {
         ImGui::BeginChild("training-images", {0, -ImGui::GetFrameHeightWithSpacing()});
         canvas.draw(picture);
         ImGui::EndChild();
-        ImGui::TextDisabled(preview.reconstruction ? "Original / Reconstruction · Step %llu" : "EMA preview / Step %llu", preview.training_step);
+        ImGui::TextDisabled("EMA preview / Step %llu", preview.training_step);
     }
 } // namespace flowdit::editor
